@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +10,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 )
 
 const (
@@ -49,14 +50,18 @@ func (p *Client) Websocket(query string, options ...Option) *Subscription {
 func (p *Client) WebsocketOnce(query string, resp any, options ...Option) error {
 	sock := p.Websocket(query, options...)
 	defer func() { _ = sock.Close() }()
-	if reflect.ValueOf(resp).Kind() == reflect.Ptr {
+	if reflect.ValueOf(resp).Kind() == reflect.Pointer {
 		return sock.Next(resp)
 	}
 	// TODO: verify this is never called and remove it
 	return sock.Next(&resp)
 }
 
-func (p *Client) WebsocketWithPayload(query string, initPayload map[string]any, options ...Option) *Subscription {
+func (p *Client) WebsocketWithPayload(
+	query string,
+	initPayload map[string]any,
+	options ...Option,
+) *Subscription {
 	r, err := p.newRequest(query, options...)
 	if err != nil {
 		return errorSubscription(fmt.Errorf("request: %w", err))
@@ -69,55 +74,71 @@ func (p *Client) WebsocketWithPayload(query string, initPayload map[string]any, 
 
 	srv := httptest.NewServer(p.h)
 	host := strings.ReplaceAll(srv.URL, "http://", "ws://")
-	c, resp, err := websocket.DefaultDialer.Dial(host+r.URL.Path, r.Header)
+	c, resp, err := websocket.Dial(context.Background(), host+r.URL.Path, &websocket.DialOptions{
+		HTTPHeader: r.Header,
+	})
 	if err != nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		srv.Close()
 		return errorSubscription(fmt.Errorf("dial: %w", err))
 	}
-	defer resp.Body.Close()
+
+	closeFn := func() error {
+		srv.Close()
+		return c.CloseNow()
+	}
 
 	initMessage := operationMessage{Type: connectionInitMsg}
 	if initPayload != nil {
 		initMessage.Payload, err = json.Marshal(initPayload)
 		if err != nil {
+			_ = closeFn()
 			return errorSubscription(fmt.Errorf("parse payload: %w", err))
 		}
 	}
 
-	if err = c.WriteJSON(initMessage); err != nil {
+	if err = writeWebsocketJSON(c, initMessage); err != nil {
+		_ = closeFn()
 		return errorSubscription(fmt.Errorf("init: %w", err))
 	}
 
-	var ack operationMessage
-	if err = c.ReadJSON(&ack); err != nil {
+	ack, err := readWebsocketJSON(c)
+	if err != nil {
+		_ = closeFn()
 		return errorSubscription(fmt.Errorf("ack: %w", err))
 	}
 
 	if ack.Type != connectionAckMsg {
+		_ = closeFn()
 		return errorSubscription(fmt.Errorf("expected ack message, got %#v", ack))
 	}
 
-	var ka operationMessage
-	if err = c.ReadJSON(&ka); err != nil {
+	ka, err := readWebsocketJSON(c)
+	if err != nil {
+		_ = closeFn()
 		return errorSubscription(fmt.Errorf("ack: %w", err))
 	}
 
 	if ka.Type != connectionKaMsg {
+		_ = closeFn()
 		return errorSubscription(fmt.Errorf("expected ack message, got %#v", ack))
 	}
 
-	if err = c.WriteJSON(operationMessage{Type: startMsg, ID: "1", Payload: requestBody}); err != nil {
+	if err = writeWebsocketJSON(
+		c,
+		operationMessage{Type: startMsg, ID: "1", Payload: requestBody},
+	); err != nil {
+		_ = closeFn()
 		return errorSubscription(fmt.Errorf("start: %w", err))
 	}
 
 	return &Subscription{
-		Close: func() error {
-			srv.Close()
-			return c.Close()
-		},
+		Close: closeFn,
 		Next: func(response any) error {
 			for {
-				var op operationMessage
-				err := c.ReadJSON(&op)
+				op, err := readWebsocketJSON(c)
 				if err != nil {
 					return err
 				}
@@ -149,4 +170,33 @@ func (p *Client) WebsocketWithPayload(query string, initPayload map[string]any, 
 			}
 		},
 	}
+}
+
+func writeWebsocketJSON(c *websocket.Conn, msg operationMessage) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return c.Write(context.Background(), websocket.MessageText, data)
+}
+
+func readWebsocketJSON(c *websocket.Conn) (operationMessage, error) {
+	messageType, r, err := c.Reader(context.Background())
+	if err != nil {
+		return operationMessage{}, err
+	}
+	if messageType != websocket.MessageText {
+		return operationMessage{}, fmt.Errorf("expected text message, got %v", messageType)
+	}
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return operationMessage{}, err
+	}
+
+	var msg operationMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return operationMessage{}, err
+	}
+	return msg, nil
 }

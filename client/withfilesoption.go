@@ -24,7 +24,9 @@ func findFiles(parentMapKey string, variables map[string]any) []*fileFormDataMap
 			files = append(files, findFiles(parentMapKey+"."+key, v)...)
 		} else if v, ok := value.([]map[string]any); ok {
 			for i, arr := range v {
-				files = append(files, findFiles(fmt.Sprintf(`%s.%s.%d`, parentMapKey, key, i), arr)...)
+				files = append(
+					files,
+					findFiles(fmt.Sprintf(`%s.%s.%d`, parentMapKey, key, i), arr)...)
 			}
 		} else if v, ok := value.([]*os.File); ok {
 			for i, file := range v {
@@ -86,12 +88,16 @@ func WithFiles() Option {
 			}
 		}
 		if len(filesGroup) > 0 {
-			mapDataFiles := []string{}
+			mapDataFiles := make([]string, 0, len(filesGroup))
 
 			for i, fileData := range filesGroup {
 				mapDataFiles = append(
 					mapDataFiles,
-					fmt.Sprintf(`"%d":[%s]`, i, strings.Join(collect(fileData, wrapMapKeyInQuotes), ",")),
+					fmt.Sprintf(
+						`"%d":[%s]`,
+						i,
+						strings.Join(collect(fileData, wrapMapKeyInQuotes), ","),
+					),
 				)
 			}
 
@@ -107,7 +113,10 @@ func WithFiles() Option {
 		//
 		for i, fileData := range filesGroup {
 			h := make(textproto.MIMEHeader)
-			h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%d"; filename="%s"`, i, fileData[0].file.Name()))
+			h.Set(
+				"Content-Disposition",
+				fmt.Sprintf(`form-data; name="%d"; filename="%s"`, i, fileData[0].file.Name()),
+			)
 			b, _ := os.ReadFile(fileData[0].file.Name())
 			h.Set("Content-Type", http.DetectContentType(b))
 			ff, _ := bodyWriter.CreatePart(h)

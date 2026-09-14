@@ -40,16 +40,20 @@ func (t MultipartMixed) Supports(r *http.Request) bool {
 // Do implements the multipart/mixed spec as a multipart/mixed response
 func (t MultipartMixed) Do(w http.ResponseWriter, r *http.Request, exec graphql.GraphExecutor) {
 	// Implements the multipart/mixed spec as a multipart/mixed response:
-	// * https://github.com/graphql/graphql-wg/blob/e4ef5f9d5997815d9de6681655c152b6b7838b4c/rfcs/DeferStream.md
+	// *
+	// https://github.com/graphql/graphql-wg/blob/e4ef5f9d5997815d9de6681655c152b6b7838b4c/rfcs/DeferStream.md
 	//   2022/08/23 as implemented by gqlgen.
-	// * https://github.com/graphql/graphql-wg/blob/f22ea7748c6ebdf88fdbf770a8d9e41984ebd429/rfcs/DeferStream.md June 2023 Spec for the
+	// *
+	// https://github.com/graphql/graphql-wg/blob/f22ea7748c6ebdf88fdbf770a8d9e41984ebd429/rfcs/DeferStream.md
+	// June 2023 Spec for the
 	//   `incremental` field
 	// * https://github.com/graphql/graphql-over-http/blob/main/rfcs/IncrementalDelivery.md
 	//   multipart specification
 	// Follows the format that is used in the Apollo Client tests:
 	// https://github.com/apollographql/apollo-client/blob/v3.11.8/src/link/http/__tests__/responseIterator.ts#L68
-	// Apollo Client, despite mentioning in its requests that they require the 2022 spec, it wants the
-	// `incremental` field to be an array of responses, not a single response. Theoretically we could
+	// Apollo Client, despite mentioning in its requests that they require the 2022 spec, it wants
+	// the `incremental` field to be an array of responses, not a single response. Theoretically we
+	// could
 	// batch responses in the `incremental` field, if we wanted to optimize this code.
 	ctx := r.Context()
 	flusher, ok := w.(http.Flusher)
@@ -76,11 +80,6 @@ func (t MultipartMixed) Do(w http.ResponseWriter, r *http.Request, exec graphql.
 
 	params := &graphql.RawParams{}
 	start := graphql.Now()
-	params.Headers = r.Header
-	params.ReadTime = graphql.TraceTiming{
-		Start: start,
-		End:   graphql.Now(),
-	}
 
 	bodyString, err := getRequestBody(r)
 	if err != nil {
@@ -92,7 +91,7 @@ func (t MultipartMixed) Do(w http.ResponseWriter, r *http.Request, exec graphql.
 	}
 
 	bodyReader := io.NopCloser(strings.NewReader(bodyString))
-	if err = jsonDecode(bodyReader, &params); err != nil {
+	if err = jsonDecode(bodyReader, params); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		gqlErr := gqlerror.Errorf(
 			"json request body could not be decoded: %+v body:%s",
@@ -103,6 +102,12 @@ func (t MultipartMixed) Do(w http.ResponseWriter, r *http.Request, exec graphql.
 		log.Printf("decoding error: %+v body:%s", err.Error(), bodyString)
 		writeJson(w, resp)
 		return
+	}
+
+	params.Headers = r.Header
+	params.ReadTime = graphql.TraceTiming{
+		Start: start,
+		End:   graphql.Now(),
 	}
 
 	rc, opErr := exec.CreateOperationContext(ctx, params)
@@ -178,7 +183,8 @@ func writeContentTypeHeader(w io.Writer) {
 	fmt.Fprintf(w, "Content-Type: application/json\r\n\r\n")
 }
 
-// multipartResponseAggregator helps us reduce the number of responses sent to the frontend by batching all the
+// multipartResponseAggregator helps us reduce the number of responses sent to the frontend by
+// batching all the
 // incremental responses together.
 type multipartResponseAggregator struct {
 	mu              sync.Mutex

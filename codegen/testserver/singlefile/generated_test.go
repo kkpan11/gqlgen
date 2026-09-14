@@ -8,15 +8,15 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/stretchr/testify/require"
 
 	"github.com/99designs/gqlgen/client"
 	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
 )
 
 func TestForcedResolverFieldIsPointer(t *testing.T) {
-	field, ok := reflect.TypeOf((*ForcedResolverResolver)(nil)).Elem().MethodByName("Field")
+	field, ok := reflect.TypeFor[ForcedResolverResolver]().MethodByName("Field")
 	require.True(t, ok)
 	require.Equal(t, "*singlefile.Circle", field.Type.Out(0).String())
 }

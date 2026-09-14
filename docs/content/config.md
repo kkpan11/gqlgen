@@ -64,6 +64,10 @@ resolver:
   # resolver_template: [your/path/resolver.gotpl]
   # Optional: turn on to avoid rewriting existing resolver(s) when generating
   # preserve_resolver: false
+  # Optional: turn on to hold the root resolver in a named "r" field instead of embedding it.
+  # Speeds up compilation on large schemas. Turning this on is source-breaking for existing
+  # resolver bodies: dependencies are reached as r.r.myService instead of r.myService.
+  # omit_resolver_embedding: false
 
 # Optional: turn on use ` + "`" + `gqlgen:"fieldName"` + "`" + ` tags in your models
 # struct_tag: json
@@ -92,6 +96,9 @@ resolver:
 # Optional: turn on to exclude resolver fields from the generated models file.
 # omit_resolver_fields: false
 
+# Optional: turn on to set a different prefix to the generated base structs used for embedding.
+# embedded_structs_prefix: "Base"
+
 # Optional: turn off to make struct-type struct fields not use pointers
 # e.g. type Thing struct { FieldA OtherThing } instead of { FieldA *OtherThing }
 # struct_fields_always_pointers: true
@@ -111,6 +118,23 @@ resolver:
 # Optional: set to skip running `go mod tidy` when generating server code
 # skip_mod_tidy: true
 
+# Optional: set to use -gcflags="-N -l" during validation to disable compiler
+# optimizations. This makes cold cache validation ~2x faster since we only need
+# to check for errors, not produce optimized code. Default: false
+# fast_validation: false
+
+# Optional: set to use go/format.Source instead of imports.Process for formatting.
+# This is significantly faster (~10x) but doesn't group imports by stdlib/external/internal.
+# Imports will be sorted alphabetically instead. Default: false
+# skip_import_grouping: false
+
+# Optional: set to reuse byte buffers via sync.Pool during code formatting to reduce
+# GC pressure. Default: false (enable for large projects)
+# use_buffer_pooling: false
+
+# Optional: set to skip generation of JSON Marshalers and Unmarshalers for enums
+# omit_enum_json_marshalers: false
+
 # Optional: if this is set to true, argument directives that
 # decorate a field with a null value will still be called.
 #
@@ -120,7 +144,15 @@ call_argument_directives_with_null: true
 
 # This enables gql server to use function syntax for execution context
 # instead of generating receiver methods of the execution context.
-# use_function_syntax_for_execution_context: true
+# use_function_syntax_for_execution_context: false
+
+# Optional: set to true to enable subscription context propagation.
+# When enabled, all subscription resolvers return (<-chan graphql.Event[T], error)
+# instead of (<-chan T, error), matching @subscriptionContext without annotating each field.
+# This enables per-event tracing and metadata propagation through the ctx passed
+# to AroundResponses interceptors.
+# Default: false (disabled for backward compatibility)
+# subscription_context_field: false
 
 # Optional: set build tags that will be used to load packages
 # go_build_tags:
@@ -138,6 +170,9 @@ call_argument_directives_with_null: true
 # if they match it will use them, otherwise it will generate them.
 autobind:
 #  - "{{.}}/graph/model"
+
+# Optional: turn on to allow binding to getters and hasers (useful for editions protos)
+# autobind_getter_haser: true
 
 # This section declares type mapping between the GraphQL and go type systems
 #
@@ -195,12 +230,15 @@ directive @goField(
 	name: String
 	omittable: Boolean
 	type: String
+  autoBindGetterHaser: Boolean
+  forceGenerate: Boolean
+	batch: Boolean
 ) on INPUT_FIELD_DEFINITION | FIELD_DEFINITION
 
 directive @goTag(
 	key: String!
 	value: String
-) on INPUT_FIELD_DEFINITION | FIELD_DEFINITION
+) repeatable on INPUT_FIELD_DEFINITION | FIELD_DEFINITION
 
 directive @goExtraField(
 	name: String
@@ -208,7 +246,15 @@ directive @goExtraField(
 	overrideTags: String
 	description: String
 ) repeatable on OBJECT | INPUT_OBJECT
+
+directive @inlineArguments on ARGUMENT_DEFINITION
+
+directive @subscriptionContext on FIELD_DEFINITION
 ```
+
+`@subscriptionContext` opts a single subscription field into per-event context
+propagation. See [Per-event context for subscriptions](/reference/subscription-context/)
+for details.
 
 > Here be dragons
 >
@@ -272,3 +318,166 @@ DomainB
 
 After first generating `resolvers` section you can comment out the entire resolver section of the `config.yaml`, so that resolvers are **not** auto-generated so you can then design any desired resolver architecture.
 This idea is from a discussion [https://github.com/99designs/gqlgen/issues/1253](https://github.com/99designs/gqlgen/issues/1253#issuecomment-664448226)
+
+## Performance optimization options
+
+gqlgen provides several options to optimize code generation performance, especially useful for large schemas.
+
+### skip_validation
+
+```yaml
+skip_validation: true
+```
+
+Skips the final validation step that compiles generated code to check for errors.
+
+**When to use:**
+- During rapid local development when you'll compile immediately after anyway
+- In CI pipelines where a separate build step follows generation
+
+**When NOT to use:**
+- When you want immediate feedback on generation errors
+- When the generated code won't be compiled immediately after
+
+**Performance impact:** Saves 1-4 minutes depending on project size and cache state.
+
+---
+
+### fast_validation
+
+```yaml
+fast_validation: true  # default: false
+```
+
+Uses `-gcflags="-N -l"` during validation to disable Go compiler optimizations and inlining. Since validation only checks for compilation errors (not producing production binaries), optimizations are unnecessary.
+
+**When to use:**
+- Especially beneficial on cold cache (fresh checkout, CI without cache)
+- When you want faster validation without skipping it entirely
+
+**When NOT to use:**
+- If you need the validation build artifacts for debugging with optimizations
+- If you experience issues with the unoptimized build (very rare)
+
+**Performance impact:** ~2x faster cold cache validation (e.g., 4m 30s → 2m 15s).
+
+**Trade-off:** None for typical use. The validation binary is discarded after checking for errors.
+
+---
+
+### skip_import_grouping
+
+```yaml
+skip_import_grouping: true  # default: false
+```
+
+Uses `go/format.Source` instead of `golang.org/x/tools/imports.Process` for formatting generated code. This is significantly faster but produces different import formatting.
+
+**When to use:**
+- Large projects where generation time is a concern
+- When you don't care about import grouping style in generated files
+- When using automated formatters that will reformat anyway
+
+**When NOT to use:**
+- When you require imports grouped by category (stdlib, external, internal)
+- When your linter enforces specific import grouping in generated files
+- When generated files are frequently read by developers and style matters
+
+**Performance impact:** ~10x faster formatting (e.g., 2 minutes → 10 seconds for large projects).
+
+**Trade-off:**
+- With `false` (default): Imports are grouped and sorted by stdlib → external → internal
+- With `true`: Imports are sorted alphabetically without grouping
+
+Example difference:
+```go
+// skip_import_grouping: false (default) - grouped imports
+import (
+    "context"
+    "fmt"
+
+    "github.com/99designs/gqlgen/graphql"
+    "github.com/vektah/gqlparser/v2/ast"
+
+    "myproject/internal/models"
+)
+
+// skip_import_grouping: true - alphabetically sorted, no groups
+import (
+    "context"
+    "fmt"
+    "github.com/99designs/gqlgen/graphql"
+    "github.com/vektah/gqlparser/v2/ast"
+    "myproject/internal/models"
+)
+```
+
+---
+
+### skip_mod_tidy
+
+```yaml
+skip_mod_tidy: true
+```
+
+Skips running `go mod tidy` after code generation.
+
+**When to use:**
+- When your dependencies are already correct
+- In CI pipelines where mod tidy runs separately
+- When generating frequently during development
+
+**When NOT to use:**
+- After adding new external type bindings that may require new dependencies
+- When setting up a project for the first time
+
+**Performance impact:** Saves 1-5 seconds depending on module size.
+
+---
+
+### use_buffer_pooling
+
+```yaml
+use_buffer_pooling: true  # default: false
+```
+
+Reuses `bytes.Buffer` via `sync.Pool` during code formatting to reduce GC pressure.
+
+**When to use:**
+- Large projects with many generated files
+- When GC pauses are noticeable during generation
+
+**When NOT to use:**
+- If debugging memory issues and need to isolate buffer behavior
+
+**Performance impact:** Reduces GC pause times by ~25% for large projects.
+
+---
+
+### Recommended configurations
+
+**For maximum speed during development:**
+```yaml
+skip_validation: true
+skip_mod_tidy: true
+skip_import_grouping: true
+fast_validation: true
+use_buffer_pooling: true
+```
+
+**For CI with validation:**
+```yaml
+skip_validation: false
+fast_validation: true
+skip_mod_tidy: true
+skip_import_grouping: true  # or false if import style matters
+use_buffer_pooling: true
+```
+
+**For production/release builds:**
+```yaml
+skip_validation: false
+fast_validation: true
+skip_mod_tidy: false
+# skip_import_grouping: false  # default - consistent import style
+```

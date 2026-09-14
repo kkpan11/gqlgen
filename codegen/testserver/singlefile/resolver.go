@@ -17,6 +17,11 @@ func (r *backedByInterfaceResolver) ID(ctx context.Context, obj BackedByInterfac
 	panic("not implemented")
 }
 
+// OtherResolvedValue is the resolver for the otherResolvedValue field.
+func (r *deferModelResolver) OtherResolvedValue(ctx context.Context, obj *DeferModel) (string, error) {
+	panic("not implemented")
+}
+
 // Values is the resolver for the values field.
 func (r *deferModelResolver) Values(ctx context.Context, obj *DeferModel) ([]string, error) {
 	panic("not implemented")
@@ -64,6 +69,16 @@ func (r *mutationResolver) DefaultInput(ctx context.Context, input DefaultInput)
 
 // OverrideValueViaInput is the resolver for the overrideValueViaInput field.
 func (r *mutationResolver) OverrideValueViaInput(ctx context.Context, input FieldsOrderInput) (*FieldsOrderPayload, error) {
+	panic("not implemented")
+}
+
+// UpdateProduct is the resolver for the updateProduct field.
+func (r *mutationResolver) UpdateProduct(ctx context.Context, input map[string]interface{}) (string, error) {
+	panic("not implemented")
+}
+
+// Issue4053 is the resolver for the issue4053 field.
+func (r *mutationResolver) Issue4053(ctx context.Context, input *Issue4053Input1) (bool, error) {
 	panic("not implemented")
 }
 
@@ -123,7 +138,7 @@ func (r *queryResolver) Collision(ctx context.Context) (*introspection1.It, erro
 }
 
 // MapInput is the resolver for the mapInput field.
-func (r *queryResolver) MapInput(ctx context.Context, input map[string]interface{}) (*bool, error) {
+func (r *queryResolver) MapInput(ctx context.Context, input map[string]any) (*bool, error) {
 	panic("not implemented")
 }
 
@@ -187,6 +202,11 @@ func (r *queryResolver) DeprecatedField(ctx context.Context) (string, error) {
 	panic("not implemented")
 }
 
+// FieldWithDeprecatedArg is the resolver for the fieldWithDeprecatedArg field.
+func (r *queryResolver) FieldWithDeprecatedArg(ctx context.Context, oldArg *int, newArg *int) (*string, error) {
+	panic("not implemented")
+}
+
 // Overlapping is the resolver for the overlapping field.
 func (r *queryResolver) Overlapping(ctx context.Context) (*OverlappingFields, error) {
 	panic("not implemented")
@@ -234,6 +254,16 @@ func (r *queryResolver) DirectiveInput(ctx context.Context, arg InputDirectives)
 
 // DirectiveInputType is the resolver for the directiveInputType field.
 func (r *queryResolver) DirectiveInputType(ctx context.Context, arg InnerInput) (*string, error) {
+	panic("not implemented")
+}
+
+// DirectiveInputOuter is the resolver for the directiveInputOuter field.
+func (r *queryResolver) DirectiveInputOuter(ctx context.Context, arg OuterWrapperInput) (*string, error) {
+	panic("not implemented")
+}
+
+// DirectiveInputWithArgs is the resolver for the directiveInputWithArgs field.
+func (r *queryResolver) DirectiveInputWithArgs(ctx context.Context, arg InputDirectivesWithArgs) (*string, error) {
 	panic("not implemented")
 }
 
@@ -287,6 +317,46 @@ func (r *queryResolver) EnumInInput(ctx context.Context, input *InputWithEnumVal
 	panic("not implemented")
 }
 
+// SearchProducts is the resolver for the searchProducts field.
+func (r *queryResolver) SearchProducts(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	panic("not implemented")
+}
+
+// SearchRequired is the resolver for the searchRequired field.
+func (r *queryResolver) SearchRequired(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	panic("not implemented")
+}
+
+// SearchProductsNormal is the resolver for the searchProductsNormal field.
+func (r *queryResolver) SearchProductsNormal(ctx context.Context, filters map[string]any) ([]string, error) {
+	panic("not implemented")
+}
+
+// SearchWithDefaults is the resolver for the searchWithDefaults field.
+func (r *queryResolver) SearchWithDefaults(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	panic("not implemented")
+}
+
+// SearchMixed is the resolver for the searchMixed field.
+func (r *queryResolver) SearchMixed(ctx context.Context, filters map[string]interface{}, limit *int, offset *int, sortBy *string) ([]string, error) {
+	panic("not implemented")
+}
+
+// FilterProducts is the resolver for the filterProducts field.
+func (r *queryResolver) FilterProducts(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	panic("not implemented")
+}
+
+// FindProducts is the resolver for the findProducts field.
+func (r *queryResolver) FindProducts(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	panic("not implemented")
+}
+
+// SearchWithDirectives is the resolver for the searchWithDirectives field.
+func (r *queryResolver) SearchWithDirectives(ctx context.Context, input map[string]interface{}) ([]string, error) {
+	panic("not implemented")
+}
+
 // Shapes is the resolver for the shapes field.
 func (r *queryResolver) Shapes(ctx context.Context) ([]Shape, error) {
 	panic("not implemented")
@@ -328,12 +398,17 @@ func (r *queryResolver) Issue896a(ctx context.Context) ([]*CheckIssue896, error)
 }
 
 // MapStringInterface is the resolver for the mapStringInterface field.
-func (r *queryResolver) MapStringInterface(ctx context.Context, in map[string]interface{}) (map[string]interface{}, error) {
+func (r *queryResolver) MapStringInterface(ctx context.Context, in map[string]any) (map[string]any, error) {
 	panic("not implemented")
 }
 
 // MapNestedStringInterface is the resolver for the mapNestedStringInterface field.
-func (r *queryResolver) MapNestedStringInterface(ctx context.Context, in *NestedMapInput) (map[string]interface{}, error) {
+func (r *queryResolver) MapNestedStringInterface(ctx context.Context, in *NestedMapInput) (map[string]any, error) {
+	panic("not implemented")
+}
+
+// MapNestedMapSlice is the resolver for the mapNestedMapSlice field.
+func (r *queryResolver) MapNestedMapSlice(ctx context.Context, input map[string]any) (*bool, error) {
 	panic("not implemented")
 }
 
@@ -409,6 +484,11 @@ func (r *queryResolver) StringFromContextFunction(ctx context.Context) (string, 
 
 // DefaultScalar is the resolver for the defaultScalar field.
 func (r *queryResolver) DefaultScalar(ctx context.Context, arg string) (string, error) {
+	panic("not implemented")
+}
+
+// SkipInclude is the resolver for the skipInclude field.
+func (r *queryResolver) SkipInclude(ctx context.Context) (*SkipIncludeTestType, error) {
 	panic("not implemented")
 }
 
@@ -584,19 +664,21 @@ func (r *Resolver) WrappedMap() WrappedMapResolver { return &wrappedMapResolver{
 // WrappedSlice returns WrappedSliceResolver implementation.
 func (r *Resolver) WrappedSlice() WrappedSliceResolver { return &wrappedSliceResolver{r} }
 
-type backedByInterfaceResolver struct{ *Resolver }
-type deferModelResolver struct{ *Resolver }
-type errorsResolver struct{ *Resolver }
-type forcedResolverResolver struct{ *Resolver }
-type modelMethodsResolver struct{ *Resolver }
-type mutationResolver struct{ *Resolver }
-type overlappingFieldsResolver struct{ *Resolver }
-type panicsResolver struct{ *Resolver }
-type petResolver struct{ *Resolver }
-type primitiveResolver struct{ *Resolver }
-type primitiveStringResolver struct{ *Resolver }
-type queryResolver struct{ *Resolver }
-type subscriptionResolver struct{ *Resolver }
-type userResolver struct{ *Resolver }
-type wrappedMapResolver struct{ *Resolver }
-type wrappedSliceResolver struct{ *Resolver }
+type (
+	backedByInterfaceResolver struct{ *Resolver }
+	deferModelResolver        struct{ *Resolver }
+	errorsResolver            struct{ *Resolver }
+	forcedResolverResolver    struct{ *Resolver }
+	modelMethodsResolver      struct{ *Resolver }
+	mutationResolver          struct{ *Resolver }
+	overlappingFieldsResolver struct{ *Resolver }
+	panicsResolver            struct{ *Resolver }
+	petResolver               struct{ *Resolver }
+	primitiveResolver         struct{ *Resolver }
+	primitiveStringResolver   struct{ *Resolver }
+	queryResolver             struct{ *Resolver }
+	subscriptionResolver      struct{ *Resolver }
+	userResolver              struct{ *Resolver }
+	wrappedMapResolver        struct{ *Resolver }
+	wrappedSliceResolver      struct{ *Resolver }
+)

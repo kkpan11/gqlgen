@@ -75,11 +75,33 @@ The WebSocket transport is complex, and for any non-trivial application you will
 configure it. The transport handles this configuration by setting fields on the `transport.Websocket`
 struct. For an in-depth look at all configuration options, [explore the implementation][code].
 
-At it's most basic, the transport uses [`github.com/gorilla/websocket`][gorilla] to implement
-a WebSocket connection that sets up the subscription and then sends data to the client from
+At its most basic, the transport sets up the subscription and then sends data to the client from
 the Go channel returned by the resolver. The initial handshake and the structure of the data
-payloads are defined by one of two protocols: `graphql-ws` or `graphql-transport-ws` Which
+payloads are defined by one of two protocols: `graphql-ws` or `graphql-transport-ws`. Which
 one is used is negotiated by the client, defaulting to [`graphql-ws`][graphql-ws].
+
+By default, gqlgen uses [`github.com/coder/websocket`][coder-websocket] to upgrade
+the HTTP connection. Use the `Implementation` field to plug in a different
+adapter or to configure accept options such as allowed origins and subprotocols:
+
+```go
+import (
+	"time"
+
+	coderws "github.com/coder/websocket"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
+)
+
+srv.AddTransport(transport.Websocket{
+	KeepAlivePingInterval: 10 * time.Second,
+	Implementation: transport.CoderWebsocketImplementation{
+		AcceptOptions: coderws.AcceptOptions{
+			OriginPatterns: []string{"https://ui.mysite.com"},
+			Subprotocols:   []string{"graphql-transport-ws", "graphql-ws"},
+		},
+	},
+})
+```
 
 A minimal WebSocket configuration will handle two basic things: keep-alives and security
 checks that are normally handled by HTTP middleware that may not be available or compatible
@@ -97,27 +119,46 @@ srv.AddTransport(transport.Websocket{
 	// long since walked to the kitchen to make a sandwich instead.
 	KeepAlivePingInterval: 10 * time.Second,
 
-	// The `github.com/gorilla/websocket.Upgrader` is used to handle the transition
-	// from an HTTP connection to a WebSocket connection. Among other options, here
-	// you must check the origin of the request to prevent cross-site request forgery
-	// attacks.
-	Upgrader: websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-				// Allow exact match on host.
-				origin := r.Header.Get("Origin")
-				if origin == "" || origin == r.Header.Get("Host") {
-					return true
-				}
-
-				// Match on allow-listed origins.
-				return slices.Contains([]string{":3000", "https://ui.mysite.com"}, origin)
+	// Among other options, you must check the origin of the request to prevent
+	// cross-site request forgery attacks.
+	Implementation: transport.CoderWebsocketImplementation{
+		AcceptOptions: coderws.AcceptOptions{
+			OriginPatterns: []string{"localhost:3000", "ui.mysite.com"},
 		},
 	},
 })
 ```
 
+### Limiting Payload Size
+
+By default, the WebSocket transport enforces a **1 MB read limit** per message. This protects
+your server against DoS/DDoS attacks where clients send very large payloads over many concurrent
+connections — even when compression makes those payloads tiny on the wire.
+
+You can tune this limit using `PayloadReadLimit`:
+
+```go
+// Tighten the limit to 512 KB for your use case.
+limit := int64(512 * 1024)
+srv.AddTransport(transport.Websocket{
+	PayloadReadLimit: &limit,
+})
+```
+
+```go
+// Relax the limit to 10 MB if your application sends large payloads.
+limit := int64(10 * 1024 * 1024)
+srv.AddTransport(transport.Websocket{
+	PayloadReadLimit: &limit,
+})
+```
+
+When a client sends a message that exceeds the limit, the default Coder-backed adapter closes
+the connection immediately without processing the payload. Custom websocket adapters should
+implement `transport.WebsocketReadLimiter` to preserve this behavior.
+
 [code]: https://github.com/99designs/gqlgen/blob/master/graphql/handler/transport/websocket.go
-[gorilla]: https://pkg.go.dev/github.com/gorilla/websocket
+[coder-websocket]: https://pkg.go.dev/github.com/coder/websocket
 [graphql-ws]: https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
 
 ## Adding Subscriptions to your Schema
@@ -158,7 +199,7 @@ type Subscription {
 
 ## Implementing your Resolver
 
-After regenerating your code with `go run github.com/99designs/gqlgen generate` you'll find a
+After regenerating your code with `go tool gqlgen generate` you'll find a
 new resolver for your subscription. It will look like any other resolver, except it expects
 a `<-chan *model.Time` (or whatever your type is). This is a
 [channel](https://go.dev/tour/concurrency/2). Channels in Go are used to send objects to a
@@ -290,10 +331,9 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"slices"
 	"time"
 
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/graphql/playground"
@@ -317,13 +357,9 @@ func main() {
 	srv.AddTransport(transport.SSE{})
 	srv.AddTransport(transport.Websocket{
 		KeepAlivePingInterval: 10 * time.Second,
-		Upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-					origin := r.Header.Get("Origin")
-					if origin == "" || origin == r.Header.Get("Host") {
-						return true
-					}
-					return slices.Contains([]string{":3000", "https://ui.mysite.com"}, origin)
+		Implementation: transport.CoderWebsocketImplementation{
+			AcceptOptions: coderws.AcceptOptions{
+				OriginPatterns: []string{"localhost:3000", "ui.mysite.com"},
 			},
 		},
 	})

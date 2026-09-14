@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"maps"
 	"mime"
 	"net/http"
 	"strings"
@@ -11,7 +12,11 @@ const (
 	acceptApplicationGraphqlResponseJson = "application/graphql-response+json"
 )
 
-func determineResponseContentType(explicitHeaders map[string][]string, r *http.Request) string {
+func determineResponseContentType(
+	explicitHeaders map[string][]string,
+	r *http.Request,
+	useGrapQLResponseJsonByDefault bool,
+) string {
 	for k, v := range explicitHeaders {
 		if strings.EqualFold(k, "Content-Type") {
 			return v[0]
@@ -19,20 +24,24 @@ func determineResponseContentType(explicitHeaders map[string][]string, r *http.R
 	}
 
 	accept := r.Header.Get("Accept")
-	// TODO(steve): Consider adding config option to opt-in to
-	// default "application/graphql-response+json"
 	if accept == "" {
+		if useGrapQLResponseJsonByDefault {
+			return acceptApplicationGraphqlResponseJson
+		}
 		return acceptApplicationJson
 	}
 
-	for _, acceptPart := range strings.Split(accept, ",") {
+	for acceptPart := range strings.SplitSeq(accept, ",") {
 		mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(acceptPart))
 		if err != nil {
 			continue
 		}
 		switch mediaType {
 		case "*/*", "application/*":
-			return acceptApplicationGraphqlResponseJson
+			if useGrapQLResponseJsonByDefault {
+				return acceptApplicationGraphqlResponseJson
+			}
+			return acceptApplicationJson
 		case "application/json":
 			return acceptApplicationJson
 		case "application/graphql-response+json":
@@ -61,11 +70,7 @@ func writeHeaders(w http.ResponseWriter, headers map[string][]string) {
 
 func mergeHeaders(baseHeaders, additionalHeaders map[string][]string) map[string][]string {
 	result := make(map[string][]string)
-	for k, v := range baseHeaders {
-		result[k] = v
-	}
-	for key, values := range additionalHeaders {
-		result[key] = values
-	}
+	maps.Copy(result, baseHeaders)
+	maps.Copy(result, additionalHeaders)
 	return result
 }

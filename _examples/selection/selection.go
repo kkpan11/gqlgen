@@ -5,6 +5,7 @@ package selection
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -33,12 +34,15 @@ func (r *queryResolver) Events(ctx context.Context) ([]Event, error) {
 			sels = append(sels, fmt.Sprintf("inline fragment on %s", sel.TypeCondition))
 		case *ast.FragmentSpread:
 			fragment := opCtx.Doc.Fragments.ForName(sel.Name)
-			sels = append(sels, fmt.Sprintf("named fragment %s on %s", sel.Name, fragment.TypeCondition))
+			sels = append(
+				sels,
+				fmt.Sprintf("named fragment %s on %s", sel.Name, fragment.TypeCondition),
+			)
 		}
 	}
 
 	var events []Event
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if i%2 == 0 {
 			events = append(events, &Like{
 				Selection: sels,
@@ -49,9 +53,11 @@ func (r *queryResolver) Events(ctx context.Context) ([]Event, error) {
 		} else {
 			events = append(events, &Post{
 				Selection: sels,
-				Collected: formatCollected(graphql.CollectFieldsCtx(ctx, []string{"Post"})),
-				Message:   "Hey",
-				Sent:      time.Now(),
+				Collected: formatCollected(
+					graphql.CollectFieldsCtx(ctx, []string{http.MethodPost}),
+				),
+				Message: "Hey",
+				Sent:    time.Now(),
 			})
 		}
 	}

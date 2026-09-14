@@ -4,11 +4,11 @@ package federation
 import (
 	"testing"
 
-	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/stretchr/testify/require"
 
 	"github.com/99designs/gqlgen/client"
 	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/plugin/federation/testdata/computedrequires"
 	"github.com/99designs/gqlgen/plugin/federation/testdata/computedrequires/generated"
 )
@@ -94,46 +94,49 @@ func TestComputedRequires(t *testing.T) {
 		require.Equal(t, 860, resp.Entities[1].Weight)
 	})
 
-	t.Run("PlanetRequiresNested entities with requires directive having nested field", func(t *testing.T) {
-		representations := []map[string]any{
-			{
-				"__typename": "PlanetRequiresNested",
-				"name":       "earth",
-				"world": map[string]any{
-					"foo": "A",
+	t.Run(
+		"PlanetRequiresNested entities with requires directive having nested field",
+		func(t *testing.T) {
+			representations := []map[string]any{
+				{
+					"__typename": "PlanetRequiresNested",
+					"name":       "earth",
+					"world": map[string]any{
+						"foo": "A",
+					},
+				}, {
+					"__typename": "PlanetRequiresNested",
+					"name":       "mars",
+					"world": map[string]any{
+						"foo": "B",
+					},
 				},
-			}, {
-				"__typename": "PlanetRequiresNested",
-				"name":       "mars",
-				"world": map[string]any{
-					"foo": "B",
-				},
-			},
-		}
+			}
 
-		var resp struct {
-			Entities []struct {
-				Name  string `json:"name"`
-				World struct {
-					Foo string `json:"foo"`
-				} `json:"world"`
-			} `json:"_entities"`
-		}
+			var resp struct {
+				Entities []struct {
+					Name  string `json:"name"`
+					World struct {
+						Foo string `json:"foo"`
+					} `json:"world"`
+				} `json:"_entities"`
+			}
 
-		err := c.Post(
-			entityQuery([]string{
-				"PlanetRequiresNested {name, world { foo }}",
-			}),
-			&resp,
-			client.Var("representations", representations),
-		)
+			err := c.Post(
+				entityQuery([]string{
+					"PlanetRequiresNested {name, world { foo }}",
+				}),
+				&resp,
+				client.Var("representations", representations),
+			)
 
-		require.NoError(t, err)
-		require.Equal(t, "earth", resp.Entities[0].Name)
-		require.Equal(t, "A", resp.Entities[0].World.Foo)
-		require.Equal(t, "mars", resp.Entities[1].Name)
-		require.Equal(t, "B", resp.Entities[1].World.Foo)
-	})
+			require.NoError(t, err)
+			require.Equal(t, "earth", resp.Entities[0].Name)
+			require.Equal(t, "A", resp.Entities[0].World.Foo)
+			require.Equal(t, "mars", resp.Entities[1].Name)
+			require.Equal(t, "B", resp.Entities[1].World.Foo)
+		},
+	)
 }
 
 func TestMultiComputedRequires(t *testing.T) {
@@ -162,12 +165,13 @@ func TestMultiComputedRequires(t *testing.T) {
 			Entities []struct {
 				Name string `json:"name"`
 				Key1 string `json:"key1"`
+				Key2 string `json:"key2"`
 			} `json:"_entities"`
 		}
 
 		err := c.Post(
 			entityQuery([]string{
-				"MultiHelloRequires {name, key1}",
+				"MultiHelloRequires {name, key2}",
 			}),
 			&resp,
 			client.Var("representations", representations),
@@ -175,9 +179,9 @@ func TestMultiComputedRequires(t *testing.T) {
 
 		require.NoError(t, err)
 		require.Equal(t, "first name - 1", resp.Entities[0].Name)
-		require.Equal(t, "key1 - 1", resp.Entities[0].Key1)
+		require.Equal(t, "key1 - 1", resp.Entities[0].Key2)
 		require.Equal(t, "first name - 2", resp.Entities[1].Name)
-		require.Equal(t, "key1 - 2", resp.Entities[1].Key1)
+		require.Equal(t, "key1 - 2", resp.Entities[1].Key2)
 	})
 
 	t.Run("MultiHelloMultipleRequires entities with multiple required fields", func(t *testing.T) {
@@ -200,12 +204,13 @@ func TestMultiComputedRequires(t *testing.T) {
 				Name string `json:"name"`
 				Key1 string `json:"key1"`
 				Key2 string `json:"key2"`
+				Key3 string `json:"key3"`
 			} `json:"_entities"`
 		}
 
 		err := c.Post(
 			entityQuery([]string{
-				"MultiHelloMultipleRequires {name, key1, key2}",
+				"MultiHelloMultipleRequires {name, key3}",
 			}),
 			&resp,
 			client.Var("representations", representations),
@@ -213,51 +218,52 @@ func TestMultiComputedRequires(t *testing.T) {
 
 		require.NoError(t, err)
 		require.Equal(t, "first name - 1", resp.Entities[0].Name)
-		require.Equal(t, "key1 - 1", resp.Entities[0].Key1)
-		require.Equal(t, "key2 - 1", resp.Entities[0].Key2)
+		require.Equal(t, "key1 - 1:key2 - 1", resp.Entities[0].Key3)
 		require.Equal(t, "first name - 2", resp.Entities[1].Name)
-		require.Equal(t, "key1 - 2", resp.Entities[1].Key1)
-		require.Equal(t, "key2 - 2", resp.Entities[1].Key2)
+		require.Equal(t, "key1 - 2:key2 - 2", resp.Entities[1].Key3)
 	})
 
-	t.Run("MultiPlanetRequiresNested entities with requires directive having nested field", func(t *testing.T) {
-		representations := []map[string]any{
-			{
-				"__typename": "MultiPlanetRequiresNested",
-				"name":       "earth",
-				"world": map[string]any{
-					"foo": "A",
+	t.Run(
+		"MultiPlanetRequiresNested entities with requires directive having nested field",
+		func(t *testing.T) {
+			representations := []map[string]any{
+				{
+					"__typename": "MultiPlanetRequiresNested",
+					"name":       "earth",
+					"world": map[string]any{
+						"foo": "A",
+					},
+				}, {
+					"__typename": "MultiPlanetRequiresNested",
+					"name":       "mars",
+					"world": map[string]any{
+						"foo": "B",
+					},
 				},
-			}, {
-				"__typename": "MultiPlanetRequiresNested",
-				"name":       "mars",
-				"world": map[string]any{
-					"foo": "B",
-				},
-			},
-		}
+			}
 
-		var resp struct {
-			Entities []struct {
-				Name  string `json:"name"`
-				World struct {
-					Foo string `json:"foo"`
-				} `json:"world"`
-			} `json:"_entities"`
-		}
+			var resp struct {
+				Entities []struct {
+					Name  string `json:"name"`
+					World struct {
+						Foo string `json:"foo"`
+					} `json:"world"`
+				} `json:"_entities"`
+			}
 
-		err := c.Post(
-			entityQuery([]string{
-				"MultiPlanetRequiresNested {name, world { foo }}",
-			}),
-			&resp,
-			client.Var("representations", representations),
-		)
+			err := c.Post(
+				entityQuery([]string{
+					"MultiPlanetRequiresNested {name, world { foo }}",
+				}),
+				&resp,
+				client.Var("representations", representations),
+			)
 
-		require.NoError(t, err)
-		require.Equal(t, "earth", resp.Entities[0].Name)
-		require.Equal(t, "A", resp.Entities[0].World.Foo)
-		require.Equal(t, "mars", resp.Entities[1].Name)
-		require.Equal(t, "B", resp.Entities[1].World.Foo)
-	})
+			require.NoError(t, err)
+			require.Equal(t, "earth", resp.Entities[0].Name)
+			require.Equal(t, "A", resp.Entities[0].World.Foo)
+			require.Equal(t, "mars", resp.Entities[1].Name)
+			require.Equal(t, "B", resp.Entities[1].World.Foo)
+		},
+	)
 }

@@ -1,16 +1,18 @@
 package transport_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vektah/gqlparser/v2"
@@ -24,6 +26,8 @@ import (
 )
 
 type ckey string
+
+var _ transport.WebsocketImplementation = transport.CoderWebsocketImplementation{}
 
 func TestWebsocket(t *testing.T) {
 	handler := testserver.New()
@@ -50,7 +54,9 @@ func TestWebsocket(t *testing.T) {
 		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionTerminateMsg}))
 
 		_, _, err := c.ReadMessage()
-		assert.Equal(t, websocket.CloseNormalClosure, err.(*websocket.CloseError).Code)
+		var closeErr coderws.CloseError
+		require.ErrorAs(t, err, &closeErr)
+		assert.Equal(t, coderws.StatusNormalClosure, closeErr.Code)
 	})
 
 	t.Run("client must send init first", func(t *testing.T) {
@@ -85,7 +91,9 @@ func TestWebsocket(t *testing.T) {
 		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionTerminateMsg}))
 
 		_, _, err := c.ReadMessage()
-		assert.Equal(t, websocket.CloseNormalClosure, err.(*websocket.CloseError).Code)
+		var closeErr coderws.CloseError
+		require.ErrorAs(t, err, &closeErr)
+		assert.Equal(t, coderws.StatusNormalClosure, closeErr.Code)
 	})
 
 	t.Run("client gets parse errors", func(t *testing.T) {
@@ -104,7 +112,11 @@ func TestWebsocket(t *testing.T) {
 
 		msg := readOp(c)
 		assert.Equal(t, errorMsg, msg.Type)
-		assert.JSONEq(t, `[{"message":"Unexpected !","locations":[{"line":1,"column":1}],"extensions":{"code":"GRAPHQL_PARSE_FAILED"}}]`, string(msg.Payload))
+		assert.JSONEq(
+			t,
+			`[{"message":"Unexpected !","locations":[{"line":1,"column":1}],"extensions":{"code":"GRAPHQL_PARSE_FAILED"}}]`,
+			string(msg.Payload),
+		)
 	})
 
 	t.Run("client can receive data", func(t *testing.T) {
@@ -148,7 +160,7 @@ func TestWebsocket(t *testing.T) {
 			require.NotEqual(t, completeMsg, msg.Type)
 			require.NotEqual(t, "test_1", msg.ID)
 		} else {
-			assert.Contains(t, err.Error(), "timeout")
+			require.ErrorIs(t, err, context.DeadlineExceeded)
 		}
 	})
 }
@@ -195,11 +207,13 @@ func TestWebsocketWithPassedHeaders(t *testing.T) {
 		KeepAlivePingInterval: 100 * time.Millisecond,
 	})
 
-	h.AroundOperations(func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
-		assert.NotNil(t, graphql.GetOperationContext(ctx).Headers)
+	h.AroundOperations(
+		func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+			assert.NotNil(t, graphql.GetOperationContext(ctx).Headers)
 
-		return next(ctx)
-	})
+			return next(ctx)
+		},
+	)
 
 	srv := httptest.NewServer(h)
 	defer srv.Close()
@@ -247,44 +261,50 @@ func TestWebsocketInitFunc(t *testing.T) {
 		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
 	})
 
-	t.Run("accept connection if WebsocketInitFunc is provided and is accepting connection", func(t *testing.T) {
-		h := testserver.New()
-		h.AddTransport(transport.Websocket{
-			InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
-				return context.WithValue(ctx, ckey("newkey"), "newvalue"), nil, nil
-			},
-		})
-		srv := httptest.NewServer(h)
-		defer srv.Close()
+	t.Run(
+		"accept connection if WebsocketInitFunc is provided and is accepting connection",
+		func(t *testing.T) {
+			h := testserver.New()
+			h.AddTransport(transport.Websocket{
+				InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
+					return context.WithValue(ctx, ckey("newkey"), "newvalue"), nil, nil
+				},
+			})
+			srv := httptest.NewServer(h)
+			defer srv.Close()
 
-		c := wsConnect(srv.URL)
-		defer c.Close()
+			c := wsConnect(srv.URL)
+			defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
+			require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
 
-		assert.Equal(t, connectionAckMsg, readOp(c).Type)
-		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
-	})
+			assert.Equal(t, connectionAckMsg, readOp(c).Type)
+			assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
+		},
+	)
 
-	t.Run("reject connection if WebsocketInitFunc is provided and is accepting connection", func(t *testing.T) {
-		h := testserver.New()
-		h.AddTransport(transport.Websocket{
-			InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
-				return ctx, nil, errors.New("invalid init payload")
-			},
-		})
-		srv := httptest.NewServer(h)
-		defer srv.Close()
+	t.Run(
+		"reject connection if WebsocketInitFunc is provided and is accepting connection",
+		func(t *testing.T) {
+			h := testserver.New()
+			h.AddTransport(transport.Websocket{
+				InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
+					return ctx, nil, errors.New("invalid init payload")
+				},
+			})
+			srv := httptest.NewServer(h)
+			defer srv.Close()
 
-		c := wsConnect(srv.URL)
-		defer c.Close()
+			c := wsConnect(srv.URL)
+			defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
+			require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
 
-		msg := readOp(c)
-		assert.Equal(t, connectionErrorMsg, msg.Type)
-		assert.JSONEq(t, `{"message":"invalid init payload"}`, string(msg.Payload))
-	})
+			msg := readOp(c)
+			assert.Equal(t, connectionErrorMsg, msg.Type)
+			assert.JSONEq(t, `{"message":"invalid init payload"}`, string(msg.Payload))
+		},
+	)
 
 	t.Run("can return context for request from WebsocketInitFunc", func(t *testing.T) {
 		es := &graphql.ExecutableSchemaMock{
@@ -294,11 +314,11 @@ func TestWebsocketInitFunc(t *testing.T) {
 			},
 			SchemaFunc: func() *ast.Schema {
 				return gqlparser.MustLoadSchema(&ast.Source{Input: `
-				schema { query: Query }
-				type Query {
-					empty: String
-				}
-			`})
+					schema { query: Query }
+					type Query {
+						empty: String
+					}
+				`})
 			},
 		}
 		h := handler.New(es)
@@ -321,37 +341,115 @@ func TestWebsocketInitFunc(t *testing.T) {
 		assert.Equal(t, "ok", resp.Empty)
 	})
 
-	t.Run("can set a deadline on a websocket connection and close it with a reason", func(t *testing.T) {
-		h := testserver.New()
-		var cancel func()
-		h.AddTransport(transport.Websocket{
-			InitFunc: func(ctx context.Context, _ transport.InitPayload) (newCtx context.Context, _ *transport.InitPayload, _ error) {
-				newCtx, cancel = context.WithTimeout(transport.AppendCloseReason(ctx, "beep boop"), time.Millisecond*5)
-				return
-			},
-		})
-		srv := httptest.NewServer(h)
-		defer srv.Close()
+	t.Run(
+		"can set a deadline on a websocket connection and close it with a reason",
+		func(t *testing.T) {
+			h := testserver.New()
+			var cancel func()
+			h.AddTransport(transport.Websocket{
+				InitFunc: func(ctx context.Context, _ transport.InitPayload) (newCtx context.Context, _ *transport.InitPayload, _ error) {
+					newCtx, cancel = context.WithTimeout(
+						transport.AppendCloseReason(ctx, "beep boop"),
+						time.Millisecond*5,
+					)
+					return
+				},
+			})
+			srv := httptest.NewServer(h)
+			defer srv.Close()
 
-		c := wsConnect(srv.URL)
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
-		assert.Equal(t, connectionAckMsg, readOp(c).Type)
-		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
+			c := wsConnect(srv.URL)
+			require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
+			assert.Equal(t, connectionAckMsg, readOp(c).Type)
+			assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
 
-		// Cancel should contain an actual value now, so let's call it when we exit this scope (to make the linter happy)
-		defer cancel()
+			// Cancel should contain an actual value now, so let's call it when we exit this scope
+			// (to make the linter happy)
+			defer cancel()
 
-		time.Sleep(time.Millisecond * 10)
-		m := readOp(c)
-		assert.Equal(t, connectionErrorMsg, m.Type)
-		assert.JSONEq(t, `{"message":"beep boop"}`, string(m.Payload))
-	})
-	t.Run("accept connection if WebsocketInitFunc is provided and is accepting connection", func(t *testing.T) {
+			time.Sleep(time.Millisecond * 10)
+			m := readOp(c)
+			assert.Equal(t, connectionErrorMsg, m.Type)
+			assert.JSONEq(t, `{"message":"beep boop"}`, string(m.Payload))
+		},
+	)
+	t.Run(
+		"accept connection if WebsocketInitFunc is provided and is accepting connection",
+		func(t *testing.T) {
+			h := testserver.New()
+			h.AddTransport(transport.Websocket{
+				InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
+					initResponsePayload := transport.InitPayload{"trackingId": "123-456"}
+					return context.WithValue(
+						ctx,
+						ckey("newkey"),
+						"newvalue",
+					), &initResponsePayload, nil
+				},
+			})
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+
+			c := wsConnect(srv.URL)
+			defer c.Close()
+
+			require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
+
+			connAck := readOp(c)
+			assert.Equal(t, connectionAckMsg, connAck.Type)
+
+			var payload map[string]any
+			err := json.Unmarshal(connAck.Payload, &payload)
+			if err != nil {
+				t.Fatal("Unexpected Error", err)
+			}
+			assert.EqualValues(t, "123-456", payload["trackingId"])
+			assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
+		},
+	)
+
+	t.Run(
+		"closes with custom close code and reason when InitFunc returns error",
+		func(t *testing.T) {
+			h := testserver.New()
+			customCode := int(coderws.StatusPolicyViolation) // 1008
+			customReason := "unauthorized: token expired"
+
+			h.AddTransport(transport.Websocket{
+				InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
+					ctx = transport.WithWebsocketCloseCode(ctx, customCode)
+					ctx = transport.AppendCloseReason(ctx, customReason)
+					return ctx, nil, errors.New("invalid init payload")
+				},
+			})
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+
+			c := wsConnect(srv.URL)
+			defer c.Close()
+
+			require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
+
+			errMsg := readOp(c)
+			assert.Equal(t, connectionErrorMsg, errMsg.Type)
+			assert.JSONEq(t, `{"message":"invalid init payload"}`, string(errMsg.Payload))
+
+			_, _, err := c.ReadMessage()
+			require.Error(t, err)
+
+			var closeErr coderws.CloseError
+			ok := errors.As(err, &closeErr)
+			assert.True(t, ok, "expected coderws.CloseError, got %T", err)
+			assert.Equal(t, coderws.StatusCode(customCode), closeErr.Code)
+			assert.Equal(t, customReason, closeErr.Reason)
+		},
+	)
+
+	t.Run("uses default close code and reason when not set via context", func(t *testing.T) {
 		h := testserver.New()
 		h.AddTransport(transport.Websocket{
 			InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
-				initResponsePayload := transport.InitPayload{"trackingId": "123-456"}
-				return context.WithValue(ctx, ckey("newkey"), "newvalue"), &initResponsePayload, nil
+				return ctx, nil, errors.New("auth failed")
 			},
 		})
 		srv := httptest.NewServer(h)
@@ -362,36 +460,39 @@ func TestWebsocketInitFunc(t *testing.T) {
 
 		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
 
-		connAck := readOp(c)
-		assert.Equal(t, connectionAckMsg, connAck.Type)
+		errMsg := readOp(c)
+		assert.Equal(t, connectionErrorMsg, errMsg.Type)
 
-		var payload map[string]any
-		err := json.Unmarshal(connAck.Payload, &payload)
-		if err != nil {
-			t.Fatal("Unexpected Error", err)
-		}
-		assert.EqualValues(t, "123-456", payload["trackingId"])
-		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
+		_, _, err := c.ReadMessage()
+		require.Error(t, err)
+
+		var closeErr coderws.CloseError
+		ok := errors.As(err, &closeErr)
+		assert.True(t, ok)
+		assert.Equal(t, coderws.StatusNormalClosure, closeErr.Code)
+		assert.Equal(t, "terminated", closeErr.Reason)
 	})
 }
 
 func TestWebSocketInitTimeout(t *testing.T) {
-	t.Run("times out if no init message is received within the configured duration", func(t *testing.T) {
-		h := testserver.New()
-		h.AddTransport(transport.Websocket{
-			InitTimeout: 5 * time.Millisecond,
-		})
-		srv := httptest.NewServer(h)
-		defer srv.Close()
+	t.Run(
+		"times out if no init message is received within the configured duration",
+		func(t *testing.T) {
+			h := testserver.New()
+			h.AddTransport(transport.Websocket{
+				InitTimeout: 5 * time.Millisecond,
+			})
+			srv := httptest.NewServer(h)
+			defer srv.Close()
 
-		c := wsConnect(srv.URL)
-		defer c.Close()
+			c := wsConnect(srv.URL)
+			defer c.Close()
 
-		var msg operationMessage
-		err := c.ReadJSON(&msg)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "timeout")
-	})
+			var msg operationMessage
+			err := c.ReadJSON(&msg)
+			require.Error(t, err)
+		},
+	)
 
 	t.Run("keeps waiting for an init message if no time out is configured", func(t *testing.T) {
 		h := testserver.New()
@@ -425,8 +526,12 @@ func TestWebSocketErrorFunc(t *testing.T) {
 		h.AddTransport(transport.Websocket{
 			ErrorFunc: func(_ context.Context, err error) {
 				require.EqualError(t, err, "websocket read: invalid message received")
-				assert.IsType(t, transport.WebsocketError{}, err)
-				assert.True(t, err.(transport.WebsocketError).IsReadError)
+
+				var websocketError transport.WebsocketError
+				require.ErrorAs(t, err, &websocketError)
+				require.True(t, websocketError.IsReadError)
+				require.Error(t, websocketError.Unwrap())
+
 				errFuncCalled <- true
 			},
 		})
@@ -438,13 +543,43 @@ func TestWebSocketErrorFunc(t *testing.T) {
 		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
 		assert.Equal(t, connectionAckMsg, readOp(c).Type)
 		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
-		require.NoError(t, c.WriteMessage(websocket.TextMessage, []byte("mark my words, you will regret this")))
+		require.NoError(
+			t,
+			c.WriteText([]byte("mark my words, you will regret this")),
+		)
 
 		select {
 		case res := <-errFuncCalled:
 			assert.True(t, res)
 		case <-time.NewTimer(time.Millisecond * 20).C:
 			assert.Fail(t, "The fail handler was not called in time")
+		}
+	})
+
+	t.Run("normal close errors do not call the error handler", func(t *testing.T) {
+		errFuncCalled := make(chan error, 1)
+		h := testserver.New()
+		h.AddTransport(transport.Websocket{
+			ErrorFunc: func(_ context.Context, err error) {
+				errFuncCalled <- err
+			},
+		})
+
+		srv := httptest.NewServer(h)
+		defer srv.Close()
+
+		c := wsConnect(srv.URL)
+		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
+		assert.Equal(t, connectionAckMsg, readOp(c).Type)
+		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
+		require.NoError(t, c.WriteCloseFrame(coderws.StatusNormalClosure, "bye"))
+		defer c.Close()
+
+		select {
+		case err := <-errFuncCalled:
+			assert.Fail(t, "The error handler was called for a normal websocket close", err.Error())
+		case <-time.NewTimer(time.Millisecond * 20).C:
+			// ok
 		}
 	})
 
@@ -455,7 +590,11 @@ func TestWebSocketErrorFunc(t *testing.T) {
 				return ctx, nil, errors.New("this is not what we agreed upon")
 			},
 			ErrorFunc: func(_ context.Context, err error) {
-				assert.Fail(t, "the error handler got called when it shouldn't have", "error: "+err.Error())
+				assert.Fail(
+					t,
+					"the error handler got called when it shouldn't have",
+					"error: "+err.Error(),
+				)
 			},
 		})
 		srv := httptest.NewServer(h)
@@ -475,7 +614,11 @@ func TestWebSocketErrorFunc(t *testing.T) {
 				return newCtx, nil, nil
 			},
 			ErrorFunc: func(_ context.Context, err error) {
-				assert.Fail(t, "the error handler got called when it shouldn't have", "error: "+err.Error())
+				assert.Fail(
+					t,
+					"the error handler got called when it shouldn't have",
+					"error: "+err.Error(),
+				)
 			},
 		})
 		srv := httptest.NewServer(h)
@@ -497,7 +640,11 @@ func TestWebSocketErrorFunc(t *testing.T) {
 				return newCtx, nil, nil
 			},
 			ErrorFunc: func(_ context.Context, err error) {
-				assert.Fail(t, "the error handler got called when it shouldn't have", "error: "+err.Error())
+				assert.Fail(
+					t,
+					"the error handler got called when it shouldn't have",
+					"error: "+err.Error(),
+				)
 			},
 		})
 		srv := httptest.NewServer(h)
@@ -508,7 +655,8 @@ func TestWebSocketErrorFunc(t *testing.T) {
 		assert.Equal(t, connectionAckMsg, readOp(c).Type)
 		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
 
-		// Cancel should contain an actual value now, so let's call it when we exit this scope (to make the linter happy)
+		// Cancel should contain an actual value now, so let's call it when we exit this scope (to
+		// make the linter happy)
 		defer cancel()
 
 		time.Sleep(time.Millisecond * 20)
@@ -542,38 +690,41 @@ func TestWebSocketCloseFunc(t *testing.T) {
 		}
 	})
 
-	t.Run("the on close handler gets called only once when the websocket is closed", func(t *testing.T) {
-		closeFuncCalled := make(chan bool, 1)
-		h := testserver.New()
-		h.AddTransport(transport.Websocket{
-			CloseFunc: func(_ context.Context, _closeCode int) {
-				closeFuncCalled <- true
-			},
-		})
+	t.Run(
+		"the on close handler gets called only once when the websocket is closed",
+		func(t *testing.T) {
+			closeFuncCalled := make(chan bool, 1)
+			h := testserver.New()
+			h.AddTransport(transport.Websocket{
+				CloseFunc: func(_ context.Context, _closeCode int) {
+					closeFuncCalled <- true
+				},
+			})
 
-		srv := httptest.NewServer(h)
-		defer srv.Close()
+			srv := httptest.NewServer(h)
+			defer srv.Close()
 
-		c := wsConnect(srv.URL)
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
-		assert.Equal(t, connectionAckMsg, readOp(c).Type)
-		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionTerminateMsg}))
+			c := wsConnect(srv.URL)
+			require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionInitMsg}))
+			assert.Equal(t, connectionAckMsg, readOp(c).Type)
+			assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
+			require.NoError(t, c.WriteJSON(&operationMessage{Type: connectionTerminateMsg}))
 
-		select {
-		case res := <-closeFuncCalled:
-			assert.True(t, res)
-		case <-time.NewTimer(time.Millisecond * 20).C:
-			assert.Fail(t, "The close handler was not called in time")
-		}
+			select {
+			case res := <-closeFuncCalled:
+				assert.True(t, res)
+			case <-time.NewTimer(time.Millisecond * 20).C:
+				assert.Fail(t, "The close handler was not called in time")
+			}
 
-		select {
-		case <-closeFuncCalled:
-			assert.Fail(t, "The close handler was called more than once")
-		case <-time.NewTimer(time.Millisecond * 20).C:
-			// ok
-		}
-	})
+			select {
+			case <-closeFuncCalled:
+				assert.Fail(t, "The close handler was called more than once")
+			case <-time.NewTimer(time.Millisecond * 20).C:
+				// ok
+			}
+		},
+	)
 
 	t.Run("init func errors call the close handler", func(t *testing.T) {
 		h := testserver.New()
@@ -614,7 +765,10 @@ func TestWebsocketGraphqltransportwsSubprotocol(t *testing.T) {
 		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
 		defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}))
+		require.NoError(
+			t,
+			c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+		)
 		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
 	})
 
@@ -625,7 +779,10 @@ func TestWebsocketGraphqltransportwsSubprotocol(t *testing.T) {
 		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
 		defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}))
+		require.NoError(
+			t,
+			c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+		)
 		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
 
 		require.NoError(t, c.WriteJSON(&operationMessage{
@@ -646,7 +803,48 @@ func TestWebsocketGraphqltransportwsSubprotocol(t *testing.T) {
 		require.Equal(t, "test_1", msg.ID, string(msg.Payload))
 		require.JSONEq(t, `{"data":{"name":"test"}}`, string(msg.Payload))
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsCompleteMsg, ID: "test_1"}))
+		require.NoError(
+			t,
+			c.WriteJSON(&operationMessage{Type: graphqltransportwsCompleteMsg, ID: "test_1"}),
+		)
+
+		msg = readOp(c)
+		require.Equal(t, graphqltransportwsCompleteMsg, msg.Type)
+		require.Equal(t, "test_1", msg.ID)
+	})
+
+	t.Run("fail on null payload", func(t *testing.T) {
+		handler, srv := initialize(transport.Websocket{})
+		defer srv.Close()
+
+		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
+		defer c.Close()
+
+		require.NoError(
+			t,
+			c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+		)
+		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
+
+		require.NoError(t, c.WriteJSON(&operationMessage{
+			Type:    graphqltransportwsSubscribeMsg,
+			ID:      "test_1",
+			Payload: json.RawMessage(`null`),
+		}))
+
+		handler.SendNextSubscriptionMessage()
+		msg := readOp(c)
+		require.Equal(t, errorMsg, msg.Type, string(msg.Payload))
+		require.Equal(t, "test_1", msg.ID, string(msg.Payload))
+		require.JSONEq(
+			t,
+			`[{"message":"no operation provided","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]`,
+			string(msg.Payload),
+		)
+		require.NoError(
+			t,
+			c.WriteJSON(&operationMessage{Type: graphqltransportwsCompleteMsg, ID: "test_1"}),
+		)
 
 		msg = readOp(c)
 		require.Equal(t, graphqltransportwsCompleteMsg, msg.Type)
@@ -660,16 +858,41 @@ func TestWebsocketGraphqltransportwsSubprotocol(t *testing.T) {
 		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
 		defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}))
+		require.NoError(
+			t,
+			c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+		)
 		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
 
-		// If the keep-alives are sent, this deadline will not be used, and no timeout error will be found
+		// If the keep-alives are sent, this deadline will not be used, and no timeout error will be
+		// found
 		c.SetReadDeadline(time.Now().UTC().Add(50 * time.Millisecond))
 		var msg operationMessage
 		err := c.ReadJSON(&msg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "timeout")
 	})
+}
+
+func TestWebsocketWithCustomImplementation(t *testing.T) {
+	customImplementation := &customWebsocketImplementation{}
+	h := testserver.New()
+	h.AddTransport(transport.Websocket{
+		Implementation: customImplementation,
+	})
+
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
+	defer c.Close()
+
+	require.NoError(
+		t,
+		c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+	)
+	assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
+	assert.Contains(t, customImplementation.subprotocols, "graphql-ws")
+	assert.Contains(t, customImplementation.subprotocols, graphqltransportwsSubprotocol)
 }
 
 func TestWebsocketWithPingPongInterval(t *testing.T) {
@@ -686,7 +909,10 @@ func TestWebsocketWithPingPongInterval(t *testing.T) {
 		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
 		defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}))
+		require.NoError(
+			t,
+			c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+		)
 		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
 
 		assert.Equal(t, graphqltransportwsPingMsg, readOp(c).Type)
@@ -706,78 +932,95 @@ func TestWebsocketWithPingPongInterval(t *testing.T) {
 		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
 		defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}))
+		require.NoError(
+			t,
+			c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+		)
 		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
 
 		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsPingMsg}))
 		assert.Equal(t, graphqltransportwsPongMsg, readOp(c).Type)
 	})
 
-	t.Run("server closes with error if client does not pong and !MissingPongOk", func(t *testing.T) {
-		h := testserver.New()
-		closeFuncCalled := make(chan bool, 1)
-		h.AddTransport(transport.Websocket{
-			MissingPongOk:    false, // default value but being explicit for test clarity.
-			PingPongInterval: 5 * time.Millisecond,
-			CloseFunc: func(_ context.Context, _closeCode int) {
-				closeFuncCalled <- true
-			},
-		})
+	t.Run(
+		"server closes with error if client does not pong and !MissingPongOk",
+		func(t *testing.T) {
+			h := testserver.New()
+			closeFuncCalled := make(chan bool, 1)
+			h.AddTransport(transport.Websocket{
+				MissingPongOk:    false, // default value but being explicit for test clarity.
+				PingPongInterval: 5 * time.Millisecond,
+				CloseFunc: func(_ context.Context, _closeCode int) {
+					closeFuncCalled <- true
+				},
+			})
 
-		srv := httptest.NewServer(h)
-		defer srv.Close()
+			srv := httptest.NewServer(h)
+			defer srv.Close()
 
-		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
-		defer c.Close()
+			c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
+			defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}))
-		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
+			require.NoError(
+				t,
+				c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+			)
+			assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
 
-		assert.Equal(t, graphqltransportwsPingMsg, readOp(c).Type)
+			assert.Equal(t, graphqltransportwsPingMsg, readOp(c).Type)
 
-		select {
-		case res := <-closeFuncCalled:
-			assert.True(t, res)
-		case <-time.NewTimer(time.Millisecond * 20).C:
-			// with a 5ms interval 10ms should be the timeout, double that to make the test less likely to flake under load
-			assert.Fail(t, "The close handler was not called in time")
-		}
-	})
+			select {
+			case res := <-closeFuncCalled:
+				assert.True(t, res)
+			case <-time.NewTimer(time.Millisecond * 20).C:
+				// with a 5ms interval 10ms should be the timeout, double that to make the test less
+				// likely to flake under load
+				assert.Fail(t, "The close handler was not called in time")
+			}
+		},
+	)
 
-	t.Run("server does not close with error if client does not pong and MissingPongOk", func(t *testing.T) {
-		h := testserver.New()
-		closeFuncCalled := make(chan bool, 1)
-		h.AddTransport(transport.Websocket{
-			MissingPongOk:    true,
-			PingPongInterval: 10 * time.Millisecond,
-			CloseFunc: func(_ context.Context, _closeCode int) {
-				closeFuncCalled <- true
-			},
-		})
+	t.Run(
+		"server does not close with error if client does not pong and MissingPongOk",
+		func(t *testing.T) {
+			h := testserver.New()
+			closeFuncCalled := make(chan bool, 1)
+			h.AddTransport(transport.Websocket{
+				MissingPongOk:    true,
+				PingPongInterval: 10 * time.Millisecond,
+				CloseFunc: func(_ context.Context, _closeCode int) {
+					closeFuncCalled <- true
+				},
+			})
 
-		srv := httptest.NewServer(h)
-		defer srv.Close()
+			srv := httptest.NewServer(h)
+			defer srv.Close()
 
-		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
-		defer c.Close()
+			c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
+			defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}))
-		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
+			require.NoError(
+				t,
+				c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+			)
+			assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
 
-		assert.Equal(t, graphqltransportwsPingMsg, readOp(c).Type)
+			assert.Equal(t, graphqltransportwsPingMsg, readOp(c).Type)
 
-		select {
-		case <-closeFuncCalled:
-			assert.Fail(t, "The close handler was called even with MissingPongOk = true")
-		case _, ok := <-time.NewTimer(time.Millisecond * 20).C:
-			assert.True(t, ok)
-		}
-	})
+			select {
+			case <-closeFuncCalled:
+				assert.Fail(t, "The close handler was called even with MissingPongOk = true")
+			case _, ok := <-time.NewTimer(time.Millisecond * 20).C:
+				assert.True(t, ok)
+			}
+		},
+	)
 
 	t.Run("ping-pongs are not sent when the graphql-ws sub protocol is used", func(t *testing.T) {
 		// Regression test
 		// ---
-		// Before the refactor, the code would try to convert a ping message to a graphql-ws message type
+		// Before the refactor, the code would try to convert a ping message to a graphql-ws message
+		// type
 		// But since this message type does not exist in the graphql-ws sub protocol, it would fail
 
 		_, srv := initialize(transport.Websocket{
@@ -800,72 +1043,157 @@ func TestWebsocketWithPingPongInterval(t *testing.T) {
 		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
 		assert.Equal(t, connectionKeepAliveMsg, readOp(c).Type)
 	})
-	t.Run("pong only messages are sent when configured with graphql-transport-ws", func(t *testing.T) {
-		h, srv := initialize(transport.Websocket{PongOnlyInterval: 10 * time.Millisecond})
-		defer srv.Close()
+	t.Run(
+		"pong only messages are sent when configured with graphql-transport-ws",
+		func(t *testing.T) {
+			h, srv := initialize(transport.Websocket{PongOnlyInterval: 10 * time.Millisecond})
+			defer srv.Close()
 
-		c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
-		defer c.Close()
+			c := wsConnectWithSubprotocol(srv.URL, graphqltransportwsSubprotocol)
+			defer c.Close()
 
-		require.NoError(t, c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}))
-		assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
+			require.NoError(
+				t,
+				c.WriteJSON(&operationMessage{Type: graphqltransportwsConnectionInitMsg}),
+			)
+			assert.Equal(t, graphqltransportwsConnectionAckMsg, readOp(c).Type)
 
-		assert.Equal(t, graphqltransportwsPongMsg, readOp(c).Type)
+			assert.Equal(t, graphqltransportwsPongMsg, readOp(c).Type)
 
-		require.NoError(t, c.WriteJSON(&operationMessage{
-			Type:    graphqltransportwsSubscribeMsg,
-			ID:      "test_1",
-			Payload: json.RawMessage(`{"query": "subscription { name }"}`),
-		}))
+			require.NoError(t, c.WriteJSON(&operationMessage{
+				Type:    graphqltransportwsSubscribeMsg,
+				ID:      "test_1",
+				Payload: json.RawMessage(`{"query": "subscription { name }"}`),
+			}))
 
-		// pong
-		msg := readOp(c)
-		assert.Equal(t, graphqltransportwsPongMsg, msg.Type)
+			// pong
+			msg := readOp(c)
+			assert.Equal(t, graphqltransportwsPongMsg, msg.Type)
 
-		// server message
-		h.SendNextSubscriptionMessage()
-		msg = readOp(c)
-		require.Equal(t, graphqltransportwsNextMsg, msg.Type, string(msg.Payload))
-		require.Equal(t, "test_1", msg.ID, string(msg.Payload))
-		require.JSONEq(t, `{"data":{"name":"test"}}`, string(msg.Payload))
+			// server message
+			h.SendNextSubscriptionMessage()
+			msg = readOp(c)
+			require.Equal(t, graphqltransportwsNextMsg, msg.Type, string(msg.Payload))
+			require.Equal(t, "test_1", msg.ID, string(msg.Payload))
+			require.JSONEq(t, `{"data":{"name":"test"}}`, string(msg.Payload))
 
-		// keepalive
-		msg = readOp(c)
-		assert.Equal(t, graphqltransportwsPongMsg, msg.Type)
-	})
+			// keepalive
+			msg = readOp(c)
+			assert.Equal(t, graphqltransportwsPongMsg, msg.Type)
+		},
+	)
 }
 
-func wsConnect(url string) *websocket.Conn {
+// testWebsocketClient wraps a coder/websocket connection with a gorilla-style
+// API to keep the assertions in this file readable.
+type testWebsocketClient struct {
+	conn         *coderws.Conn
+	readDeadline time.Time
+}
+
+func (c *testWebsocketClient) Close() error {
+	return c.conn.CloseNow()
+}
+
+func (c *testWebsocketClient) readContext() (context.Context, context.CancelFunc) {
+	if c.readDeadline.IsZero() {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithDeadline(context.Background(), c.readDeadline)
+}
+
+func (c *testWebsocketClient) SetReadDeadline(t time.Time) {
+	c.readDeadline = t
+}
+
+func (c *testWebsocketClient) WriteJSON(v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return c.conn.Write(context.Background(), coderws.MessageText, data)
+}
+
+func (c *testWebsocketClient) ReadJSON(v any) error {
+	ctx, cancel := c.readContext()
+	defer cancel()
+	_, data, err := c.conn.Read(ctx)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+func (c *testWebsocketClient) WriteText(data []byte) error {
+	return c.conn.Write(context.Background(), coderws.MessageText, data)
+}
+
+func (c *testWebsocketClient) WriteCloseFrame(code coderws.StatusCode, reason string) error {
+	return c.conn.Close(code, reason)
+}
+
+func (c *testWebsocketClient) ReadMessage() (coderws.MessageType, []byte, error) {
+	ctx, cancel := c.readContext()
+	defer cancel()
+	return c.conn.Read(ctx)
+}
+
+func wsConnect(url string) *testWebsocketClient {
 	return wsConnectWithSubprotocol(url, "")
 }
 
-func wsConnectWithSubprotocol(url, subprotocol string) *websocket.Conn {
-	h := make(http.Header)
+func wsConnectWithSubprotocol(url, subprotocol string) *testWebsocketClient {
+	opts := &coderws.DialOptions{}
 	if subprotocol != "" {
-		h.Add("Sec-WebSocket-Protocol", subprotocol)
+		opts.Subprotocols = []string{subprotocol}
 	}
 
-	c, resp, err := websocket.DefaultDialer.Dial(strings.ReplaceAll(url, "http://", "ws://"), h)
+	wsURL := strings.ReplaceAll(url, "http://", "ws://")
+	c, resp, err := coderws.Dial(context.Background(), wsURL, opts)
 	if err != nil {
 		panic(err)
 	}
-	_ = resp.Body.Close()
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 
-	return c
+	return &testWebsocketClient{conn: c}
 }
 
-func writeRaw(conn *websocket.Conn, msg string) {
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+func writeRaw(c *testWebsocketClient, msg string) {
+	if err := c.WriteText([]byte(msg)); err != nil {
 		panic(err)
 	}
 }
 
-func readOp(conn *websocket.Conn) operationMessage {
+func readOp(c *testWebsocketClient) operationMessage {
 	var msg operationMessage
-	if err := conn.ReadJSON(&msg); err != nil {
+	if err := c.ReadJSON(&msg); err != nil {
 		panic(err)
 	}
 	return msg
+}
+
+func TestWebsocketWithPayloadReadLimit(t *testing.T) {
+	// Set a very small limit so we can trigger it easily in a test
+	limit := int64(100)
+	h := testserver.New()
+	h.AddTransport(transport.Websocket{PayloadReadLimit: &limit})
+
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	c := wsConnect(srv.URL)
+	defer c.Close()
+
+	// Send a payload that exceeds the 100-byte limit
+	oversized := strings.Repeat("x", 200)
+	err := c.WriteText([]byte(oversized))
+	require.NoError(t, err)
+
+	// The server closes the connection when the read limit is exceeded
+	_, _, err = c.ReadMessage()
+	require.Error(t, err)
 }
 
 // copied out from websocket_graphqlws.go to keep these private
@@ -901,4 +1229,68 @@ type operationMessage struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 	ID      string          `json:"id,omitempty"`
 	Type    string          `json:"type"`
+}
+
+type customWebsocketImplementation struct {
+	subprotocols []string
+}
+
+func (u *customWebsocketImplementation) Accept(
+	w http.ResponseWriter,
+	r *http.Request,
+	options transport.WebsocketAcceptOptions,
+) (transport.WebsocketConn, error) {
+	u.subprotocols = append([]string(nil), options.Subprotocols...)
+
+	for key, values := range options.ResponseHeader {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{
+		Subprotocols: options.Subprotocols,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return customWebsocketConn{conn: conn}, nil
+}
+
+type customWebsocketConn struct {
+	conn *coderws.Conn
+}
+
+func (c customWebsocketConn) Close() error {
+	return c.conn.CloseNow()
+}
+
+func (c customWebsocketConn) NextReader() (int, io.Reader, error) {
+	messageType, data, err := c.conn.Read(context.Background())
+	if err != nil {
+		switch coderws.CloseStatus(err) {
+		case coderws.StatusNormalClosure, coderws.StatusNoStatusRcvd:
+			return int(messageType), nil, transport.ErrWebsocketClosed
+		}
+		return int(messageType), nil, err
+	}
+
+	return int(messageType), bytes.NewReader(data), nil
+}
+
+func (c customWebsocketConn) WriteJSON(v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return c.conn.Write(context.Background(), coderws.MessageText, data)
+}
+
+func (c customWebsocketConn) WriteClose(closeCode int, message string) error {
+	return c.conn.Close(coderws.StatusCode(closeCode), message)
+}
+
+func (c customWebsocketConn) Subprotocol() string {
+	return c.conn.Subprotocol()
 }

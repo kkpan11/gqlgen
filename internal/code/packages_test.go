@@ -12,13 +12,21 @@ import (
 func TestPackages(t *testing.T) {
 	t.Run("name for existing package does not load again", func(t *testing.T) {
 		p := initialState(t)
-		require.Equal(t, "a", p.NameForPackage("github.com/99designs/gqlgen/internal/code/testdata/a"))
+		require.Equal(
+			t,
+			"a",
+			p.NameForPackage("github.com/99designs/gqlgen/internal/code/testdata/a"),
+		)
 		require.Equal(t, 1, p.numLoadCalls)
 	})
 
 	t.Run("name for unknown package makes name only load", func(t *testing.T) {
 		p := initialState(t)
-		require.Equal(t, "c", p.NameForPackage("github.com/99designs/gqlgen/internal/code/testdata/c"))
+		require.Equal(
+			t,
+			"c",
+			p.NameForPackage("github.com/99designs/gqlgen/internal/code/testdata/c"),
+		)
 		require.Equal(t, 1, p.numLoadCalls)
 		require.Equal(t, 1, p.numNameCalls)
 	})
@@ -40,6 +48,23 @@ func TestPackages(t *testing.T) {
 		require.Equal(t, "p", p.Load("github.com/99designs/gqlgen/internal/code/testdata/p").Name)
 		require.Equal(t, 3, p.numLoadCalls)
 	})
+
+	t.Run("able to load packages by relative path", func(t *testing.T) {
+		p := initialState(t)
+		require.Equal(t, "a", p.Load("./testdata/a").Name)
+		require.Equal(t, 1, p.numLoadCalls)
+		require.Equal(t, "b", p.Load("./testdata/b").Name)
+		require.Equal(t, 1, p.numLoadCalls)
+	})
+
+	t.Run("able to load relative package again after evict", func(t *testing.T) {
+		p := initialState(t)
+		p.Evict("github.com/99designs/gqlgen/internal/code/testdata/b")
+		require.Equal(t, "a", p.Load("./testdata/a").Name)
+		require.Equal(t, 1, p.numLoadCalls)
+		require.Equal(t, "b", p.Load("./testdata/b").Name)
+		require.Equal(t, 2, p.numLoadCalls)
+	})
 }
 
 func TestPackagesErrors(t *testing.T) {
@@ -48,9 +73,11 @@ func TestPackagesErrors(t *testing.T) {
 	packageErr := packages.Error{Msg: "package"}
 	p := &Packages{
 		loadErrors: []error{loadFirstErr, loadSecondErr},
-		packages: map[string]*packages.Package{"github.com/99designs/gqlgen/internal/code/testdata/a": {
-			Errors: []packages.Error{packageErr},
-		}},
+		packages: map[string]*packages.Package{
+			"github.com/99designs/gqlgen/internal/code/testdata/a": {
+				Errors: []packages.Error{packageErr},
+			},
+		},
 	}
 
 	errs := p.Errors()
@@ -68,11 +95,30 @@ func TestNameForPackage(t *testing.T) {
 	assert.Equal(t, "github_com", p.NameForPackage("github.com"))
 }
 
+func TestLoadAllNames(t *testing.T) {
+	var p Packages
+
+	p.LoadAllNames(
+		"github.com/99designs/gqlgen/api",
+		"github.com/99designs/gqlgen/docs",
+		"github.com",
+	)
+
+	// should now be cached
+	assert.Equal(t, 0, p.numNameCalls)
+	assert.Equal(t, "api", p.importToName["github.com/99designs/gqlgen/api"])
+	assert.Equal(t, "docs", p.importToName["github.com/99designs/gqlgen/docs"])
+	assert.Equal(t, "github_com", p.importToName["github.com"])
+}
+
 func initialState(t *testing.T, opts ...Option) *Packages {
+	t.Helper()
 	p := NewPackages(opts...)
 	pkgs := p.LoadAll(
 		"github.com/99designs/gqlgen/internal/code/testdata/a",
 		"github.com/99designs/gqlgen/internal/code/testdata/b",
+		"./testdata/a",
+		"./testdata/b",
 	)
 
 	require.Empty(t, p.Errors())

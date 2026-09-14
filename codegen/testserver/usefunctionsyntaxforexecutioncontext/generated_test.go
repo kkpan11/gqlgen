@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/stretchr/testify/require"
 
 	"github.com/99designs/gqlgen/client"
 	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
 )
 
 func TestQuery(t *testing.T) {
@@ -35,7 +35,7 @@ func TestQuery(t *testing.T) {
 			Name:      "test",
 			Email:     "testEmail",
 			Age:       testAge,
-			Role:      "ADMIN",
+			Role:      RoleModelAdmin,
 			CreatedAt: &createdAt,
 		}, nil
 	}
@@ -47,7 +47,7 @@ func TestQuery(t *testing.T) {
 				Name:      "test1",
 				Email:     "testEmail",
 				Age:       testAge,
-				Role:      "ADMIN",
+				Role:      RoleModelAdmin,
 				CreatedAt: &createdAt,
 			},
 			{
@@ -55,7 +55,7 @@ func TestQuery(t *testing.T) {
 				Name:      "test2",
 				Email:     "testEmail",
 				Age:       testAge,
-				Role:      "ADMIN",
+				Role:      RoleModelAdmin,
 				CreatedAt: &createdAt,
 			},
 		}, nil

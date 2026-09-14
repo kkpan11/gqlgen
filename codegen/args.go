@@ -31,7 +31,8 @@ type FieldArgument struct {
 func (f *FieldArgument) ImplDirectives() []*Directive {
 	d := make([]*Directive, 0)
 	for i := range f.Directives {
-		if !f.Directives[i].SkipRuntime && f.Directives[i].IsLocation(ast.LocationArgumentDefinition) {
+		if !f.Directives[i].SkipRuntime &&
+			f.Directives[i].IsLocation(ast.LocationArgumentDefinition) {
 			d = append(d, f.Directives[i])
 		}
 	}
@@ -41,6 +42,12 @@ func (f *FieldArgument) ImplDirectives() []*Directive {
 
 func (f *FieldArgument) DirectiveObjName() string {
 	return "rawArgs"
+}
+
+// ZeroVal returns the Go declaration for the typed zero value of this argument's
+// type, suitable for use as an error-path return value inside a directive closure.
+func (f *FieldArgument) ZeroVal() string {
+	return fmt.Sprintf("var zeroVal %s", templates.CurrentImports.LookupType(f.TypeReference.GO))
 }
 
 func (f *FieldArgument) Stream() bool {
@@ -76,7 +83,11 @@ func (b *builder) buildArg(obj *Object, arg *ast.ArgumentDefinition) (*FieldArgu
 	return &newArg, nil
 }
 
-func (b *builder) bindArgs(field *Field, sig *types.Signature, params *types.Tuple) ([]*FieldArgument, error) {
+func (b *builder) bindArgs(
+	field *Field,
+	sig *types.Signature,
+	params *types.Tuple,
+) ([]*FieldArgument, error) {
 	n := params.Len()
 	newArgs := make([]*FieldArgument, 0, len(field.Args))
 	// Accept variadic methods (i.e. have optional parameters).
@@ -92,6 +103,7 @@ nextArg:
 				if err != nil {
 					return nil, err
 				}
+				b.Binder.RemoveRef(oldArg.TypeReference)
 				oldArg.TypeReference = tr
 
 				newArgs = append(newArgs, oldArg)

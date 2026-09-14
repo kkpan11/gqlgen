@@ -22,6 +22,12 @@ type ContentChild interface {
 	IsContentChild()
 }
 
+type DeferModelInterface interface {
+	IsDeferModelInterface()
+	GetOtherResolvedValue() string
+	GetValues() []string
+}
+
 type Mammalian interface {
 	IsAnimal()
 	IsMammalian()
@@ -95,9 +101,23 @@ type DefaultParametersMirror struct {
 }
 
 type DeferModel struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Values []string `json:"values"`
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	OtherResolvedValue string   `json:"otherResolvedValue"`
+	Values             []string `json:"values"`
+}
+
+func (DeferModel) IsDeferModelInterface()             {}
+func (this DeferModel) GetOtherResolvedValue() string { return this.OtherResolvedValue }
+func (this DeferModel) GetValues() []string {
+	if this.Values == nil {
+		return nil
+	}
+	interfaceSlice := make([]string, 0, len(this.Values))
+	for _, concrete := range this.Values {
+		interfaceSlice = append(interfaceSlice, concrete)
+	}
+	return interfaceSlice
 }
 
 type Dog struct {
@@ -150,6 +170,10 @@ type InputDirectives struct {
 	ThirdParty    *ThirdParty      `json:"thirdParty,omitempty"`
 }
 
+type InputDirectivesWithArgs struct {
+	Text string `json:"text"`
+}
+
 type InputWithEnumValue struct {
 	Enum EnumTest `json:"enum"`
 }
@@ -176,7 +200,7 @@ type NestedInput struct {
 }
 
 type NestedMapInput struct {
-	Map map[string]interface{} `json:"map,omitempty"`
+	Map map[string]any `json:"map,omitempty"`
 }
 
 type ObjectDirectives struct {
@@ -204,6 +228,10 @@ type OuterObject struct {
 	Inner *InnerObject `json:"inner"`
 }
 
+type OuterWrapperInput struct {
+	Inner *InputDirectives `json:"inner"`
+}
+
 type Pet struct {
 	ID      int    `json:"id"`
 	Friends []*Pet `json:"friends,omitempty"`
@@ -215,6 +243,11 @@ type Query struct {
 type Size struct {
 	Height int `json:"height"`
 	Weight int `json:"weight"`
+}
+
+type SkipIncludeTestType struct {
+	A *string `json:"a,omitempty"`
+	B *string `json:"b,omitempty"`
 }
 
 type Slices struct {
@@ -330,7 +363,7 @@ func (e *EnumTest) UnmarshalGQL(v any) error {
 }
 
 func (e EnumTest) MarshalGQL(w io.Writer) {
-	fmt.Fprint(w, strconv.Quote(e.String()))
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
 }
 
 func (e *EnumTest) UnmarshalJSON(b []byte) error {
@@ -385,7 +418,7 @@ func (e *Status) UnmarshalGQL(v any) error {
 }
 
 func (e Status) MarshalGQL(w io.Writer) {
-	fmt.Fprint(w, strconv.Quote(e.String()))
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
 }
 
 func (e *Status) UnmarshalJSON(b []byte) error {

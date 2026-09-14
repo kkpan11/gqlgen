@@ -7,11 +7,78 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/vektah/gqlparser/v2/ast"
 	"golang.org/x/tools/go/packages"
 
 	"github.com/99designs/gqlgen/codegen"
 	"github.com/99designs/gqlgen/codegen/config"
 )
+
+func TestResolverBuild_ResolverTypeDeclarations(t *testing.T) {
+	object := func(name string) *codegen.Object {
+		return &codegen.Object{Definition: &ast.Definition{Name: name}}
+	}
+
+	tests := map[string]struct {
+		objects               []*codegen.Object
+		resolverType          string
+		omitResolverEmbedding bool
+		want                  string
+	}{
+		"no objects yields no declaration": {
+			objects:      nil,
+			resolverType: "Resolver",
+			want:         "",
+		},
+		"single object is a lone declaration": {
+			objects:      []*codegen.Object{object("Query")},
+			resolverType: "Resolver",
+			want:         "type queryResolver struct{ *Resolver }",
+		},
+		"multiple objects are grouped and column-aligned": {
+			objects:      []*codegen.Object{object("Query"), object("Subscription")},
+			resolverType: "Resolver",
+			want: "type (\n" +
+				"\tqueryResolver        struct{ *Resolver }\n" +
+				"\tsubscriptionResolver struct{ *Resolver }\n" +
+				")",
+		},
+		"alignment follows the custom resolver type name": {
+			objects:      []*codegen.Object{object("Query"), object("Mutation")},
+			resolverType: "rootResolver",
+			want: "type (\n" +
+				"\tqueryRootResolver    struct{ *rootResolver }\n" +
+				"\tmutationRootResolver struct{ *rootResolver }\n" +
+				")",
+		},
+		"omitting the embedding names the field on a lone declaration": {
+			objects:               []*codegen.Object{object("Query")},
+			resolverType:          "Resolver",
+			omitResolverEmbedding: true,
+			want:                  "type queryResolver struct{ r *Resolver }",
+		},
+		"omitting the embedding names the field on every grouped declaration": {
+			objects:               []*codegen.Object{object("Query"), object("Subscription")},
+			resolverType:          "Resolver",
+			omitResolverEmbedding: true,
+			want: "type (\n" +
+				"\tqueryResolver        struct{ r *Resolver }\n" +
+				"\tsubscriptionResolver struct{ r *Resolver }\n" +
+				")",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			b := &ResolverBuild{
+				File:                  &File{Objects: tt.objects},
+				ResolverType:          tt.resolverType,
+				OmitResolverEmbedding: tt.omitResolverEmbedding,
+			}
+			require.Equal(t, tt.want, b.ResolverTypeDeclarations())
+		})
+	}
+}
 
 func TestLayoutSingleFile(t *testing.T) {
 	_ = syscall.Unlink("testdata/singlefile/out/resolver.go")
@@ -48,7 +115,10 @@ func TestLayoutSingleFileWithEnableRewrite(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, p.GenerateCode(data))
-	assertNoErrors(t, "github.com/99designs/gqlgen/plugin/resolvergen/testdata/singlefile_preserve/out")
+	assertNoErrors(
+		t,
+		"github.com/99designs/gqlgen/plugin/resolvergen/testdata/singlefile_preserve/out",
+	)
 }
 
 func TestLayoutFollowSchema(t *testing.T) {
@@ -104,7 +174,33 @@ func TestOmitTemplateComment(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, p.GenerateCode(data))
-	assertNoErrors(t, "github.com/99designs/gqlgen/plugin/resolvergen/testdata/omit_template_comment/out")
+	assertNoErrors(
+		t,
+		"github.com/99designs/gqlgen/plugin/resolvergen/testdata/omit_template_comment/out",
+	)
+}
+
+func TestOmitResolverEmbedding(t *testing.T) {
+	_ = syscall.Unlink("testdata/omit_resolver_embedding/resolver.go")
+
+	cfg, err := config.LoadConfig("testdata/omit_resolver_embedding/gqlgen.yml")
+	require.NoError(t, err)
+	p := Plugin{}
+
+	require.NoError(t, cfg.Init())
+
+	data, err := codegen.BuildData(cfg)
+	require.NoError(t, err)
+
+	require.NoError(t, p.GenerateCode(data))
+	assertNoErrors(
+		t,
+		"github.com/99designs/gqlgen/plugin/resolvergen/testdata/omit_resolver_embedding/out",
+	)
+
+	b, err := os.ReadFile("testdata/omit_resolver_embedding/out/schema.resolvers.go")
+	require.NoError(t, err)
+	require.Contains(t, string(b), "struct{ r *CustomResolverType }")
 }
 
 func TestResolver_Implementation(t *testing.T) {
@@ -120,7 +216,10 @@ func TestResolver_Implementation(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, p.GenerateCode(data))
-	assertNoErrors(t, "github.com/99designs/gqlgen/plugin/resolvergen/testdata/resolver_implementor/out")
+	assertNoErrors(
+		t,
+		"github.com/99designs/gqlgen/plugin/resolvergen/testdata/resolver_implementor/out",
+	)
 }
 
 func TestCustomResolverTemplate(t *testing.T) {
@@ -135,6 +234,31 @@ func TestCustomResolverTemplate(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, p.GenerateCode(data))
+}
+
+func TestCommentDirective(t *testing.T) {
+	_ = syscall.Unlink("testdata/comment_directive/resolver.go")
+
+	cfg, err := config.LoadConfig("testdata/comment_directive/gqlgen.yml")
+	require.NoError(t, err)
+	p := Plugin{}
+
+	require.NoError(t, cfg.Init())
+
+	data, err := codegen.BuildData(cfg)
+	require.NoError(t, err)
+
+	require.NoError(t, p.GenerateCode(data))
+	assertNoErrors(
+		t,
+		"github.com/99designs/gqlgen/plugin/resolvergen/testdata/comment_directive/out",
+	)
+
+	b, err := os.ReadFile("testdata/comment_directive/out/schema.resolvers.go")
+	require.NoError(t, err)
+	source := string(b)
+
+	require.Contains(t, source, "//nolint:test // test")
 }
 
 func testFollowSchemaPersistence(t *testing.T, dir string) {
@@ -162,6 +286,7 @@ func overWriteFile(t *testing.T, sourceFile, destinationFile string) {
 }
 
 func assertNoErrors(t *testing.T, pkg string) {
+	t.Helper()
 	pkgs, err := packages.Load(&packages.Config{
 		Mode: packages.NeedName |
 			packages.NeedFiles |

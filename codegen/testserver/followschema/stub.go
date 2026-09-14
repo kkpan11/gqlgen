@@ -15,7 +15,8 @@ type Stub struct {
 		ID func(ctx context.Context, obj BackedByInterface) (string, error)
 	}
 	DeferModelResolver struct {
-		Values func(ctx context.Context, obj *DeferModel) ([]string, error)
+		OtherResolvedValue func(ctx context.Context, obj *DeferModel) (string, error)
+		Values             func(ctx context.Context, obj *DeferModel) ([]string, error)
 	}
 	ErrorsResolver struct {
 		A func(ctx context.Context, obj *Errors) (*Error, error)
@@ -33,6 +34,8 @@ type Stub struct {
 	MutationResolver struct {
 		DefaultInput          func(ctx context.Context, input DefaultInput) (*DefaultParametersMirror, error)
 		OverrideValueViaInput func(ctx context.Context, input FieldsOrderInput) (*FieldsOrderPayload, error)
+		UpdateProduct         func(ctx context.Context, input map[string]interface{}) (string, error)
+		Issue4053             func(ctx context.Context, input *Issue4053Input1) (bool, error)
 		UpdateSomething       func(ctx context.Context, input SpecialInput) (string, error)
 		UpdatePtrToPtr        func(ctx context.Context, input UpdatePtrToPtrOuter) (*PtrToPtrOuter, error)
 	}
@@ -56,7 +59,7 @@ type Stub struct {
 	QueryResolver struct {
 		InvalidIdentifier                func(ctx context.Context) (*invalid_packagename.InvalidIdentifier, error)
 		Collision                        func(ctx context.Context) (*introspection1.It, error)
-		MapInput                         func(ctx context.Context, input map[string]interface{}) (*bool, error)
+		MapInput                         func(ctx context.Context, input map[string]any) (*bool, error)
 		Recursive                        func(ctx context.Context, input *RecursiveInputSlice) (*bool, error)
 		NestedInputs                     func(ctx context.Context, input [][]*OuterInput) (*bool, error)
 		NestedOutputs                    func(ctx context.Context) ([][]*OuterObject, error)
@@ -69,6 +72,7 @@ type Stub struct {
 		ShapeUnion                       func(ctx context.Context) (ShapeUnion, error)
 		Autobind                         func(ctx context.Context) (*Autobind, error)
 		DeprecatedField                  func(ctx context.Context) (string, error)
+		FieldWithDeprecatedArg           func(ctx context.Context, oldArg *int, newArg *int) (*string, error)
 		Overlapping                      func(ctx context.Context) (*OverlappingFields, error)
 		DefaultParameters                func(ctx context.Context, falsyBoolean *bool, truthyBoolean *bool) (*DefaultParametersMirror, error)
 		DeferSingle                      func(ctx context.Context) (*DeferModel, error)
@@ -79,6 +83,8 @@ type Stub struct {
 		DirectiveInputNullable           func(ctx context.Context, arg *InputDirectives) (*string, error)
 		DirectiveInput                   func(ctx context.Context, arg InputDirectives) (*string, error)
 		DirectiveInputType               func(ctx context.Context, arg InnerInput) (*string, error)
+		DirectiveInputOuter              func(ctx context.Context, arg OuterWrapperInput) (*string, error)
+		DirectiveInputWithArgs           func(ctx context.Context, arg InputDirectivesWithArgs) (*string, error)
 		DirectiveObject                  func(ctx context.Context) (*ObjectDirectives, error)
 		DirectiveObjectWithCustomGoModel func(ctx context.Context) (*ObjectDirectivesWithCustomGoModel, error)
 		DirectiveFieldDef                func(ctx context.Context, ret string) (string, error)
@@ -89,6 +95,14 @@ type Stub struct {
 		EmbeddedCase2                    func(ctx context.Context) (*EmbeddedCase2, error)
 		EmbeddedCase3                    func(ctx context.Context) (*EmbeddedCase3, error)
 		EnumInInput                      func(ctx context.Context, input *InputWithEnumValue) (EnumTest, error)
+		SearchProducts                   func(ctx context.Context, filters map[string]interface{}) ([]string, error)
+		SearchRequired                   func(ctx context.Context, filters map[string]interface{}) ([]string, error)
+		SearchProductsNormal             func(ctx context.Context, filters map[string]any) ([]string, error)
+		SearchWithDefaults               func(ctx context.Context, filters map[string]interface{}) ([]string, error)
+		SearchMixed                      func(ctx context.Context, filters map[string]interface{}, limit *int, offset *int, sortBy *string) ([]string, error)
+		FilterProducts                   func(ctx context.Context, filters map[string]interface{}) ([]string, error)
+		FindProducts                     func(ctx context.Context, filters map[string]interface{}) ([]string, error)
+		SearchWithDirectives             func(ctx context.Context, input map[string]interface{}) ([]string, error)
 		Shapes                           func(ctx context.Context) ([]Shape, error)
 		NoShape                          func(ctx context.Context) (Shape, error)
 		Node                             func(ctx context.Context) (Node, error)
@@ -97,8 +111,9 @@ type Stub struct {
 		NotAnInterface                   func(ctx context.Context) (BackedByInterface, error)
 		Dog                              func(ctx context.Context) (*Dog, error)
 		Issue896a                        func(ctx context.Context) ([]*CheckIssue896, error)
-		MapStringInterface               func(ctx context.Context, in map[string]interface{}) (map[string]interface{}, error)
-		MapNestedStringInterface         func(ctx context.Context, in *NestedMapInput) (map[string]interface{}, error)
+		MapStringInterface               func(ctx context.Context, in map[string]any) (map[string]any, error)
+		MapNestedStringInterface         func(ctx context.Context, in *NestedMapInput) (map[string]any, error)
+		MapNestedMapSlice                func(ctx context.Context, input map[string]any) (*bool, error)
 		ErrorBubble                      func(ctx context.Context) (*Error, error)
 		ErrorBubbleList                  func(ctx context.Context) ([]*Error, error)
 		ErrorList                        func(ctx context.Context) ([]*Error, error)
@@ -114,6 +129,7 @@ type Stub struct {
 		StringFromContextInterface       func(ctx context.Context) (*StringFromContextInterface, error)
 		StringFromContextFunction        func(ctx context.Context) (string, error)
 		DefaultScalar                    func(ctx context.Context, arg string) (string, error)
+		SkipInclude                      func(ctx context.Context) (*SkipIncludeTestType, error)
 		Slices                           func(ctx context.Context) (*Slices, error)
 		ScalarSlice                      func(ctx context.Context) ([]byte, error)
 		Fallback                         func(ctx context.Context, arg FallbackToStringEncoding) (FallbackToStringEncoding, error)
@@ -214,6 +230,9 @@ func (r *stubBackedByInterface) ID(ctx context.Context, obj BackedByInterface) (
 
 type stubDeferModel struct{ *Stub }
 
+func (r *stubDeferModel) OtherResolvedValue(ctx context.Context, obj *DeferModel) (string, error) {
+	return r.DeferModelResolver.OtherResolvedValue(ctx, obj)
+}
 func (r *stubDeferModel) Values(ctx context.Context, obj *DeferModel) ([]string, error) {
 	return r.DeferModelResolver.Values(ctx, obj)
 }
@@ -255,6 +274,12 @@ func (r *stubMutation) DefaultInput(ctx context.Context, input DefaultInput) (*D
 }
 func (r *stubMutation) OverrideValueViaInput(ctx context.Context, input FieldsOrderInput) (*FieldsOrderPayload, error) {
 	return r.MutationResolver.OverrideValueViaInput(ctx, input)
+}
+func (r *stubMutation) UpdateProduct(ctx context.Context, input map[string]interface{}) (string, error) {
+	return r.MutationResolver.UpdateProduct(ctx, input)
+}
+func (r *stubMutation) Issue4053(ctx context.Context, input *Issue4053Input1) (bool, error) {
+	return r.MutationResolver.Issue4053(ctx, input)
 }
 func (r *stubMutation) UpdateSomething(ctx context.Context, input SpecialInput) (string, error) {
 	return r.MutationResolver.UpdateSomething(ctx, input)
@@ -307,7 +332,7 @@ func (r *stubQuery) InvalidIdentifier(ctx context.Context) (*invalid_packagename
 func (r *stubQuery) Collision(ctx context.Context) (*introspection1.It, error) {
 	return r.QueryResolver.Collision(ctx)
 }
-func (r *stubQuery) MapInput(ctx context.Context, input map[string]interface{}) (*bool, error) {
+func (r *stubQuery) MapInput(ctx context.Context, input map[string]any) (*bool, error) {
 	return r.QueryResolver.MapInput(ctx, input)
 }
 func (r *stubQuery) Recursive(ctx context.Context, input *RecursiveInputSlice) (*bool, error) {
@@ -346,6 +371,9 @@ func (r *stubQuery) Autobind(ctx context.Context) (*Autobind, error) {
 func (r *stubQuery) DeprecatedField(ctx context.Context) (string, error) {
 	return r.QueryResolver.DeprecatedField(ctx)
 }
+func (r *stubQuery) FieldWithDeprecatedArg(ctx context.Context, oldArg *int, newArg *int) (*string, error) {
+	return r.QueryResolver.FieldWithDeprecatedArg(ctx, oldArg, newArg)
+}
 func (r *stubQuery) Overlapping(ctx context.Context) (*OverlappingFields, error) {
 	return r.QueryResolver.Overlapping(ctx)
 }
@@ -375,6 +403,12 @@ func (r *stubQuery) DirectiveInput(ctx context.Context, arg InputDirectives) (*s
 }
 func (r *stubQuery) DirectiveInputType(ctx context.Context, arg InnerInput) (*string, error) {
 	return r.QueryResolver.DirectiveInputType(ctx, arg)
+}
+func (r *stubQuery) DirectiveInputOuter(ctx context.Context, arg OuterWrapperInput) (*string, error) {
+	return r.QueryResolver.DirectiveInputOuter(ctx, arg)
+}
+func (r *stubQuery) DirectiveInputWithArgs(ctx context.Context, arg InputDirectivesWithArgs) (*string, error) {
+	return r.QueryResolver.DirectiveInputWithArgs(ctx, arg)
 }
 func (r *stubQuery) DirectiveObject(ctx context.Context) (*ObjectDirectives, error) {
 	return r.QueryResolver.DirectiveObject(ctx)
@@ -406,6 +440,30 @@ func (r *stubQuery) EmbeddedCase3(ctx context.Context) (*EmbeddedCase3, error) {
 func (r *stubQuery) EnumInInput(ctx context.Context, input *InputWithEnumValue) (EnumTest, error) {
 	return r.QueryResolver.EnumInInput(ctx, input)
 }
+func (r *stubQuery) SearchProducts(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	return r.QueryResolver.SearchProducts(ctx, filters)
+}
+func (r *stubQuery) SearchRequired(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	return r.QueryResolver.SearchRequired(ctx, filters)
+}
+func (r *stubQuery) SearchProductsNormal(ctx context.Context, filters map[string]any) ([]string, error) {
+	return r.QueryResolver.SearchProductsNormal(ctx, filters)
+}
+func (r *stubQuery) SearchWithDefaults(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	return r.QueryResolver.SearchWithDefaults(ctx, filters)
+}
+func (r *stubQuery) SearchMixed(ctx context.Context, filters map[string]interface{}, limit *int, offset *int, sortBy *string) ([]string, error) {
+	return r.QueryResolver.SearchMixed(ctx, filters, limit, offset, sortBy)
+}
+func (r *stubQuery) FilterProducts(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	return r.QueryResolver.FilterProducts(ctx, filters)
+}
+func (r *stubQuery) FindProducts(ctx context.Context, filters map[string]interface{}) ([]string, error) {
+	return r.QueryResolver.FindProducts(ctx, filters)
+}
+func (r *stubQuery) SearchWithDirectives(ctx context.Context, input map[string]interface{}) ([]string, error) {
+	return r.QueryResolver.SearchWithDirectives(ctx, input)
+}
 func (r *stubQuery) Shapes(ctx context.Context) ([]Shape, error) {
 	return r.QueryResolver.Shapes(ctx)
 }
@@ -430,11 +488,14 @@ func (r *stubQuery) Dog(ctx context.Context) (*Dog, error) {
 func (r *stubQuery) Issue896a(ctx context.Context) ([]*CheckIssue896, error) {
 	return r.QueryResolver.Issue896a(ctx)
 }
-func (r *stubQuery) MapStringInterface(ctx context.Context, in map[string]interface{}) (map[string]interface{}, error) {
+func (r *stubQuery) MapStringInterface(ctx context.Context, in map[string]any) (map[string]any, error) {
 	return r.QueryResolver.MapStringInterface(ctx, in)
 }
-func (r *stubQuery) MapNestedStringInterface(ctx context.Context, in *NestedMapInput) (map[string]interface{}, error) {
+func (r *stubQuery) MapNestedStringInterface(ctx context.Context, in *NestedMapInput) (map[string]any, error) {
 	return r.QueryResolver.MapNestedStringInterface(ctx, in)
+}
+func (r *stubQuery) MapNestedMapSlice(ctx context.Context, input map[string]any) (*bool, error) {
+	return r.QueryResolver.MapNestedMapSlice(ctx, input)
 }
 func (r *stubQuery) ErrorBubble(ctx context.Context) (*Error, error) {
 	return r.QueryResolver.ErrorBubble(ctx)
@@ -480,6 +541,9 @@ func (r *stubQuery) StringFromContextFunction(ctx context.Context) (string, erro
 }
 func (r *stubQuery) DefaultScalar(ctx context.Context, arg string) (string, error) {
 	return r.QueryResolver.DefaultScalar(ctx, arg)
+}
+func (r *stubQuery) SkipInclude(ctx context.Context) (*SkipIncludeTestType, error) {
+	return r.QueryResolver.SkipInclude(ctx)
 }
 func (r *stubQuery) Slices(ctx context.Context) (*Slices, error) {
 	return r.QueryResolver.Slices(ctx)

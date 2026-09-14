@@ -6,17 +6,17 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/stretchr/testify/require"
 
 	"github.com/99designs/gqlgen/client"
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
 )
 
 func TestInterfaces(t *testing.T) {
 	t.Run("slices of interfaces are not pointers", func(t *testing.T) {
-		field, ok := reflect.TypeOf((*QueryResolver)(nil)).Elem().MethodByName("Shapes")
+		field, ok := reflect.TypeFor[QueryResolver]().MethodByName("Shapes")
 		require.True(t, ok)
 		require.Equal(t, "[]singlefile.Shape", field.Type.Out(0).String())
 	})
@@ -79,7 +79,7 @@ func TestInterfaces(t *testing.T) {
 		resolvers := &Stub{}
 		resolvers.QueryResolver.NoShapeTypedNil = func(ctx context.Context) (shapes Shape, e error) {
 			t.Fatal("should not be called")
-			return
+			return shapes, e
 		}
 
 		srv := handler.New(
@@ -104,7 +104,7 @@ func TestInterfaces(t *testing.T) {
 		resolvers := &Stub{}
 		resolvers.QueryResolver.Animal = func(ctx context.Context) (animal Animal, e error) {
 			t.Fatal("should not be called")
-			return
+			return animal, e
 		}
 
 		srv := handler.New(
@@ -177,7 +177,11 @@ func TestInterfaces(t *testing.T) {
 			}
 		}
 		err := c.Post(`{ notAnInterface { id, thisShouldBind, thisShouldBindWithError } }`, &resp)
-		require.EqualError(t, err, `[{"message":"boom","path":["notAnInterface","thisShouldBindWithError"]}]`)
+		require.EqualError(
+			t,
+			err,
+			`[{"message":"boom","path":["notAnInterface","thisShouldBindWithError"],"locations":[{"line":1,"column":40}]}]`,
+		)
 	})
 
 	t.Run("interfaces can implement other interfaces", func(t *testing.T) {

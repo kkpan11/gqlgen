@@ -13,8 +13,14 @@ import (
 	"github.com/99designs/gqlgen/codegen/templates"
 )
 
-//go:embed *.gotpl
-var codegenTemplates embed.FS
+//go:embed api!.gotpl internal!.gotpl directives_.gotpl
+var rootTemplateFS embed.FS
+
+//go:embed args.gotpl field.gotpl input.gotpl interface.gotpl object.gotpl type.gotpl generated!.gotpl directives_.gotpl
+var schemaTemplateFS embed.FS
+
+//go:embed api!.gotpl internal!.gotpl args.gotpl field.gotpl input.gotpl interface.gotpl object.gotpl type.gotpl generated!.gotpl directives_.gotpl
+var singleFileTemplateFS embed.FS
 
 func GenerateCode(data *Data) error {
 	if !data.Config.Exec.IsDefined() {
@@ -39,7 +45,8 @@ func generateSingleFile(data *Data) error {
 		RegionTags:      true,
 		GeneratedHeader: true,
 		Packages:        data.Config.Packages,
-		TemplateFS:      codegenTemplates,
+		TemplateFS:      singleFileTemplateFS,
+		PruneOptions:    data.Config.GetPruneOptions(),
 	})
 }
 
@@ -71,6 +78,11 @@ func generatePerSchema(data *Data) error {
 		return err
 	}
 
+	err = addDirectives(data, &builds)
+	if err != nil {
+		return err
+	}
+
 	for filename, build := range builds {
 		if filename == "" {
 			continue
@@ -86,7 +98,8 @@ func generatePerSchema(data *Data) error {
 			RegionTags:      true,
 			GeneratedHeader: true,
 			Packages:        data.Config.Packages,
-			TemplateFS:      codegenTemplates,
+			TemplateFS:      schemaTemplateFS,
+			PruneOptions:    data.Config.GetPruneOptions(),
 		})
 		if err != nil {
 			return err
@@ -124,11 +137,13 @@ func addBuild(filename string, p *ast.Position, data *Data, builds *map[string]*
 		MutationRoot:     data.MutationRoot,
 		SubscriptionRoot: data.SubscriptionRoot,
 		AllDirectives:    data.AllDirectives,
+		// Per-schema builds hold only the objects declared in their own file, so the
+		// batch-field set has to come from the whole schema. Without this, an interface
+		// whose implementors are spread across files would only register batch parents
+		// for the implementors that happen to share the interface's file.
+		allBatchFieldTypes: data.batchFieldTypes(),
 	}
 }
-
-//go:embed root_.gotpl
-var rootTemplate string
 
 // Root file contains top-level definitions that should not be duplicated across the generated
 // files for each schema file.
@@ -138,13 +153,13 @@ func generateRootFile(data *Data) error {
 
 	return templates.Render(templates.Options{
 		PackageName:     data.Config.Exec.Package,
-		Template:        rootTemplate,
 		Filename:        path,
 		Data:            data,
 		RegionTags:      false,
 		GeneratedHeader: true,
 		Packages:        data.Config.Packages,
-		TemplateFS:      codegenTemplates,
+		TemplateFS:      rootTemplateFS,
+		PruneOptions:    data.Config.GetPruneOptions(),
 	})
 }
 
@@ -188,6 +203,27 @@ func addInterfaces(data *Data, builds *map[string]*Data) error {
 		}
 
 		build.Interfaces[k] = inf
+	}
+	return nil
+}
+
+// addDirectives ensures a per-schema build exists for every source file that
+// declares directives with arguments. Without this, a .graphql file containing
+// only directive declarations (no type definitions) would produce no generated
+// file, leaving the dir_*_args argument-parsing functions undefined.
+//
+// No directive data is added to the build struct: Data.Args() calls
+// Directives(), which is scoped to the build's Config.Sources, so it
+// automatically picks up the right directive args for each per-schema file.
+func addDirectives(data *Data, builds *map[string]*Data) error {
+	for _, directive := range data.Directives() {
+		if len(directive.Args) == 0 {
+			continue
+		}
+		fname := filename(directive.Position, data.Config)
+		if (*builds)[fname] == nil {
+			addBuild(fname, directive.Position, data, builds)
+		}
 	}
 	return nil
 }

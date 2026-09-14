@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/99designs/gqlgen/_examples/federation/reviews/graph/model"
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/plugin/federation/fedruntime"
 )
 
@@ -168,7 +169,7 @@ func (ec *executionContext) resolveEntity(
 			if err != nil {
 				return nil, fmt.Errorf(`unmarshalling param 0 for findUserByID(): %w`, err)
 			}
-			entity, err := ec.resolvers.Entity().FindUserByID(ctx, id0)
+			entity, err := ec.Resolvers.Entity().FindUserByID(ctx, id0)
 			if err != nil {
 				return nil, fmt.Errorf(`resolving Entity "User": %w`, err)
 			}
@@ -222,16 +223,18 @@ func (ec *executionContext) resolveManyEntities(
 				}
 			}
 
-			entities, err := ec.resolvers.Entity().FindManyProductByManufacturerIDAndIDs(ctx, typedReps)
+			entities, err := ec.Resolvers.Entity().FindManyProductByManufacturerIDAndIDs(ctx, typedReps)
+			entityErrs, err := fedruntime.SplitEntityBatchErrors(err)
 			if err != nil {
 				return err
 			}
 
 			for i, entity := range entities {
-				entity.Manufacturer.ID, err = ec.unmarshalNString2string(ctx, reps[i].entity["manufacturer"].(map[string]any)["id"])
-				if err != nil {
-					return err
+				if i < len(entityErrs) && entityErrs[i] != nil {
+					ec.Error(graphql.WithPathContext(ctx, graphql.NewPathWithIndex(reps[i].index)), entityErrs[i])
+					continue
 				}
+
 				list[reps[i].index] = entity
 			}
 			return nil

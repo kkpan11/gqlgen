@@ -69,7 +69,9 @@ func (m *Plugin) generateSingleFile(data *codegen.Data) error {
 	for _, o := range data.Objects {
 		if o.HasResolvers() {
 			caser := cases.Title(language.English, cases.NoLower)
-			rewriter.MarkStructCopied(templates.LcFirst(o.Name) + templates.UcFirst(data.Config.Resolver.Type))
+			rewriter.MarkStructCopied(
+				templates.LcFirst(o.Name) + templates.UcFirst(data.Config.Resolver.Type),
+			)
 			rewriter.GetMethodBody(data.Config.Resolver.Type, caser.String(o.Name))
 
 			file.Objects = append(file.Objects, o)
@@ -81,10 +83,19 @@ func (m *Plugin) generateSingleFile(data *codegen.Data) error {
 			}
 
 			structName := templates.LcFirst(o.Name) + templates.UcFirst(data.Config.Resolver.Type)
-			comment := strings.TrimSpace(strings.TrimLeft(rewriter.GetMethodComment(structName, f.GoFieldName), `\`))
+			comment := strings.TrimSpace(
+				strings.TrimLeft(rewriter.GetMethodComment(structName, f.GoFieldName), `\`),
+			)
 			implementation := strings.TrimSpace(rewriter.GetMethodBody(structName, f.GoFieldName))
 			if implementation != "" {
-				resolver := Resolver{o, f, rewriter.GetPrevDecl(structName, f.GoFieldName), comment, implementation, nil}
+				resolver := Resolver{
+					o,
+					f,
+					rewriter.GetPrevDecl(structName, f.GoFieldName),
+					comment,
+					implementation,
+					nil,
+				}
 				file.Resolvers = append(file.Resolvers, &resolver)
 			} else {
 				resolver := Resolver{o, f, nil, "", `panic("not implemented")`, nil}
@@ -100,11 +111,12 @@ func (m *Plugin) generateSingleFile(data *codegen.Data) error {
 	}
 
 	resolverBuild := &ResolverBuild{
-		File:                &file,
-		PackageName:         data.Config.Resolver.Package,
-		ResolverType:        data.Config.Resolver.Type,
-		HasRoot:             true,
-		OmitTemplateComment: data.Config.Resolver.OmitTemplateComment,
+		File:                  &file,
+		PackageName:           data.Config.Resolver.Package,
+		ResolverType:          data.Config.Resolver.Type,
+		HasRoot:               true,
+		OmitTemplateComment:   data.Config.Resolver.OmitTemplateComment,
+		OmitResolverEmbedding: data.Config.Resolver.OmitResolverEmbedding,
 	}
 
 	newResolverTemplate := resolverTemplate
@@ -118,12 +130,13 @@ func (m *Plugin) generateSingleFile(data *codegen.Data) error {
 	}
 
 	return templates.Render(templates.Options{
-		PackageName: data.Config.Resolver.Package,
-		FileNotice:  fileNotice,
-		Filename:    data.Config.Resolver.Filename,
-		Data:        resolverBuild,
-		Packages:    data.Config.Packages,
-		Template:    newResolverTemplate,
+		PackageName:  data.Config.Resolver.Package,
+		FileNotice:   fileNotice,
+		Filename:     data.Config.Resolver.Filename,
+		Data:         resolverBuild,
+		Packages:     data.Config.Packages,
+		Template:     newResolverTemplate,
+		PruneOptions: data.Config.GetPruneOptions(),
 	})
 }
 
@@ -141,7 +154,11 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 
 	for _, o := range objects {
 		if o.HasResolvers() {
-			fnCase := gqlToResolverName(data.Config.Resolver.Dir(), o.Position.Src.Name, data.Config.Resolver.FilenameTemplate)
+			fnCase := gqlToResolverName(
+				data.Config.Resolver.Dir(),
+				o.Position.Src.Name,
+				data.Config.Resolver.FilenameTemplate,
+			)
 			fn := strings.ToLower(fnCase)
 			if files[fn] == nil {
 				files[fn] = &File{
@@ -150,7 +167,9 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 			}
 
 			caser := cases.Title(language.English, cases.NoLower)
-			rewriter.MarkStructCopied(templates.LcFirst(o.Name) + templates.UcFirst(data.Config.Resolver.Type))
+			rewriter.MarkStructCopied(
+				templates.LcFirst(o.Name) + templates.UcFirst(data.Config.Resolver.Type),
+			)
 			rewriter.GetMethodBody(data.Config.Resolver.Type, caser.String(o.Name))
 			files[fn].Objects = append(files[fn].Objects, o)
 		}
@@ -160,9 +179,18 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 			}
 			structName := templates.LcFirst(o.Name) + templates.UcFirst(data.Config.Resolver.Type)
 			// TODO(steve): Why do we need to trimLeft "\" here? Some bazel thing?
-			comment := strings.TrimSpace(strings.TrimLeft(rewriter.GetMethodComment(structName, f.GoFieldName), `\`))
+			comment := strings.TrimSpace(
+				strings.TrimLeft(rewriter.GetMethodComment(structName, f.GoFieldName), `\`),
+			)
 			implementation := strings.TrimSpace(rewriter.GetMethodBody(structName, f.GoFieldName))
-			resolver := Resolver{o, f, rewriter.GetPrevDecl(structName, f.GoFieldName), comment, implementation, nil}
+			resolver := Resolver{
+				o,
+				f,
+				rewriter.GetPrevDecl(structName, f.GoFieldName),
+				comment,
+				implementation,
+				nil,
+			}
 			var implExists bool
 			for _, p := range data.Plugins {
 				rImpl, ok := p.(plugin.ResolverImplementer)
@@ -175,7 +203,11 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 				implExists = true
 				resolver.ImplementationRender = rImpl.Implement
 			}
-			fnCase := gqlToResolverName(data.Config.Resolver.Dir(), f.Position.Src.Name, data.Config.Resolver.FilenameTemplate)
+			fnCase := gqlToResolverName(
+				data.Config.Resolver.Dir(),
+				f.Position.Src.Name,
+				data.Config.Resolver.FilenameTemplate,
+			)
 			fn := strings.ToLower(fnCase)
 			if files[fn] == nil {
 				files[fn] = &File{
@@ -187,10 +219,18 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 		}
 	}
 
+	var allImports []string
 	for _, file := range files {
 		file.imports = rewriter.ExistingImports(file.name)
 		file.RemainingSource = rewriter.RemainingSource(file.name)
+
+		for _, i := range file.imports {
+			allImports = append(allImports, i.ImportPath)
+		}
 	}
+	data.Config.Packages.LoadAllNames(
+		allImports...) // Preload all names in one Load call for performance reasons
+
 	newResolverTemplate := resolverTemplate
 	if data.Config.Resolver.ResolverTemplate != "" {
 		newResolverTemplate = readResolverTemplate(data.Config.Resolver.ResolverTemplate)
@@ -203,16 +243,18 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 			continue
 		}
 		resolverBuild := &ResolverBuild{
-			File:                file,
-			PackageName:         data.Config.Resolver.Package,
-			ResolverType:        data.Config.Resolver.Type,
-			OmitTemplateComment: data.Config.Resolver.OmitTemplateComment,
+			File:                  file,
+			PackageName:           data.Config.Resolver.Package,
+			ResolverType:          data.Config.Resolver.Type,
+			OmitTemplateComment:   data.Config.Resolver.OmitTemplateComment,
+			OmitResolverEmbedding: data.Config.Resolver.OmitResolverEmbedding,
 		}
 
 		var fileNotice strings.Builder
 		if !data.Config.OmitGQLGenFileNotice {
 			fileNotice.WriteString(`
-			// This file will be automatically regenerated based on the schema, any resolver implementations
+			// This file will be automatically regenerated based on the schema, any resolver
+			// implementations
 			// will be copied through when generating and any unknown code will be moved to the end.
 			// Code generated by github.com/99designs/gqlgen`,
 			)
@@ -223,12 +265,13 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 		}
 
 		err := templates.Render(templates.Options{
-			PackageName: data.Config.Resolver.Package,
-			FileNotice:  fileNotice.String(),
-			Filename:    file.name,
-			Data:        resolverBuild,
-			Packages:    data.Config.Packages,
-			Template:    newResolverTemplate,
+			PackageName:  data.Config.Resolver.Package,
+			FileNotice:   fileNotice.String(),
+			Filename:     file.name,
+			Data:         resolverBuild,
+			Packages:     data.Config.Packages,
+			Template:     newResolverTemplate,
+			PruneOptions: data.Config.GetPruneOptions(),
 		})
 		if err != nil {
 			return err
@@ -241,11 +284,13 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 			FileNotice: `
 				// This file will not be regenerated automatically.
 				//
-				// It serves as dependency injection for your app, add any dependencies you require here.`,
-			Template: `type {{.}} struct {}`,
-			Filename: data.Config.Resolver.Filename,
-			Data:     data.Config.Resolver.Type,
-			Packages: data.Config.Packages,
+				// It serves as dependency injection for your app, add any dependencies you require
+				// here.`,
+			Template:     `type {{.}} struct {}`,
+			Filename:     data.Config.Resolver.Filename,
+			Data:         data.Config.Resolver.Type,
+			Packages:     data.Config.Packages,
+			PruneOptions: data.Config.GetPruneOptions(),
 		})
 		if err != nil {
 			return err
@@ -256,16 +301,65 @@ func (m *Plugin) generatePerSchema(data *codegen.Data) error {
 
 type ResolverBuild struct {
 	*File
-	HasRoot             bool
-	PackageName         string
-	ResolverType        string
-	OmitTemplateComment bool
+	HasRoot               bool
+	PackageName           string
+	ResolverType          string
+	OmitTemplateComment   bool
+	OmitResolverEmbedding bool
+}
+
+// ResolverTypeDeclarations renders the unexported per-object resolver
+// implementation types — e.g. "queryResolver struct{ *Resolver }", or
+// "queryResolver struct{ r *Resolver }" when the root resolver is held in a
+// named field rather than embedded.
+//
+// When more than one type is declared they are emitted as a single grouped
+// "type ( ... )" block: gofumpt requires adjacent single-line type
+// declarations to be grouped, so producing the group (already column-aligned)
+// here keeps the generated file gofumpt-compliant without relying on a
+// gofmt/gofumpt pass over the codegen output. A lone type is emitted as a
+// single declaration, and the empty string is returned when there are no
+// resolver objects.
+func (b *ResolverBuild) ResolverTypeDeclarations() string {
+	if len(b.Objects) == 0 {
+		return ""
+	}
+
+	names := make([]string, len(b.Objects))
+	width := 0
+	for i, o := range b.Objects {
+		names[i] = templates.LcFirst(o.Name) + templates.UcFirst(b.ResolverType)
+		width = max(width, len(names[i]))
+	}
+
+	if len(names) == 1 {
+		return fmt.Sprintf("type %s %s", names[0], b.resolverStructType())
+	}
+
+	var sb strings.Builder
+	sb.WriteString("type (\n")
+	for _, name := range names {
+		fmt.Fprintf(&sb, "\t%-*s %s\n", width, name, b.resolverStructType())
+	}
+	sb.WriteString(")")
+	return sb.String()
+}
+
+// resolverStructType renders the struct body shared by every per-object
+// resolver type: the root resolver embedded, or held in a named "r" field when
+// Resolver.OmitResolverEmbedding is set.
+func (b *ResolverBuild) resolverStructType() string {
+	if b.OmitResolverEmbedding {
+		return fmt.Sprintf("struct{ r *%s }", b.ResolverType)
+	}
+	return fmt.Sprintf("struct{ *%s }", b.ResolverType)
 }
 
 type File struct {
 	name string
-	// These are separated because the type definition of the resolver object may live in a different file from the
-	// resolver method implementations, for example when extending a type in a different graphql schema file
+	// These are separated because the type definition of the resolver object may live in a
+	// different file from the resolver method implementations, for example when extending a type in
+	// a different graphql schema file
 	Objects         []*codegen.Object
 	Resolvers       []*Resolver
 	imports         []rewrite.Import
@@ -300,7 +394,11 @@ func (r *Resolver) Implementation() string {
 	// if not implementation was previously used, use default implementation
 	if r.ImplementationStr == "" {
 		// use default implementation, if no implementation was previously used
-		return fmt.Sprintf("panic(fmt.Errorf(\"not implemented: %v - %v\"))", r.Field.GoFieldName, r.Field.Name)
+		return fmt.Sprintf(
+			"panic(fmt.Errorf(\"not implemented: %v - %v\"))",
+			r.Field.GoFieldName,
+			r.Field.Name,
+		)
 	}
 	// use previously used implementation
 	return r.ImplementationStr

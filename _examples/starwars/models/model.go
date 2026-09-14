@@ -13,9 +13,10 @@ type CharacterFields struct {
 	AppearsIn []Episode
 }
 
-func (cf CharacterFields) GetID() string                            { return cf.ID }
-func (cf CharacterFields) GetName() string                          { return cf.Name }
-func (cf CharacterFields) GetAppearsIn() []Episode                  { return cf.AppearsIn }
+func (cf CharacterFields) GetID() string           { return cf.ID }
+func (cf CharacterFields) GetName() string         { return cf.Name }
+func (cf CharacterFields) GetAppearsIn() []Episode { return cf.AppearsIn }
+
 func (cf CharacterFields) GetFriendsConnection() *FriendsConnection { return nil } // Handled in resolver
 func (cf CharacterFields) GetFriends() []Character                  { return nil } // Handled in resolver
 
@@ -73,5 +74,5 @@ func (f *FriendsConnection) PageInfo() PageInfo {
 }
 
 func EncodeCursor(i int) string {
-	return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("cursor%d", i+1)))
+	return base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "cursor%d", i+1))
 }

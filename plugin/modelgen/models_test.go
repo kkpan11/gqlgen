@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/tools/go/packages"
 
 	"github.com/99designs/gqlgen/codegen/config"
 	"github.com/99designs/gqlgen/graphql"
@@ -64,12 +65,23 @@ func TestModelGeneration(t *testing.T) {
 	})
 
 	t.Run("description is generated", func(t *testing.T) {
-		node, err := parser.ParseFile(token.NewFileSet(), "./out/generated.go", nil, parser.ParseComments)
+		node, err := parser.ParseFile(
+			token.NewFileSet(),
+			"./out/generated.go",
+			nil,
+			parser.ParseComments,
+		)
 		require.NoError(t, err)
 		for _, commentGroup := range node.Comments {
 			text := commentGroup.Text()
 			words := strings.Split(text, " ")
-			require.Greaterf(t, len(words), 1, "expected description %q to have more than one word", text)
+			require.Greaterf(
+				t,
+				len(words),
+				1,
+				"expected description %q to have more than one word",
+				text,
+			)
 		}
 	})
 
@@ -114,11 +126,7 @@ func TestModelGeneration(t *testing.T) {
 	})
 
 	t.Run("implemented interfaces", func(t *testing.T) {
-		pkg, err := parseAst("out")
-		require.NoError(t, err)
-
-		path := filepath.Join("out", "generated.go")
-		generated := pkg.Files[path]
+		generated := parseGeneratedFile(t, "out")
 
 		type field struct {
 			typ  string
@@ -228,11 +236,7 @@ func TestModelGeneration(t *testing.T) {
 	})
 
 	t.Run("implemented interfaces type CDImplemented", func(t *testing.T) {
-		pkg, err := parseAst("out")
-		require.NoError(t, err)
-
-		path := filepath.Join("out", "generated.go")
-		generated := pkg.Files[path]
+		generated := parseGeneratedFile(t, "out")
 
 		wantMethods := []string{
 			"IsA",
@@ -303,6 +307,27 @@ func TestModelGeneration(t *testing.T) {
 	})
 }
 
+func TestModelGenerationConflictingTypes(t *testing.T) {
+	cfg, err := config.LoadConfig("testdata/gqlgen_conflicting_types.yml")
+	require.NoError(t, err)
+	require.NoError(t, cfg.Init())
+	p := Plugin{
+		MutateHook: mutateHook,
+		FieldHook:  DefaultFieldMutateHook,
+	}
+	require.NoError(t, p.MutateConfig(cfg))
+	require.NoError(t, goBuild(t, "./out_conflicting_types/"))
+	generated, err := os.ReadFile("./out_conflicting_types/generated.go")
+	require.NoError(t, err)
+
+	// Schema types are visited in sorted order, so the conflict between GraphQL
+	// FooBar and Foo_Bar (which both map to the Go name "FooBar") resolves
+	// deterministically: FooBar keeps the unsuffixed name and Foo_Bar becomes
+	// FooBar0.
+	require.Contains(t, string(generated), "WantWithoutUnderscore *FooBar ")
+	require.Contains(t, string(generated), "WantWithUnderscore *FooBar0 ")
+}
+
 func TestModelGenerationOmitRootModels(t *testing.T) {
 	cfg, err := config.LoadConfig("testdata/gqlgen_omit_root_models.yml")
 	require.NoError(t, err)
@@ -320,6 +345,22 @@ func TestModelGenerationOmitRootModels(t *testing.T) {
 	require.NotContains(t, string(generated), "type Subscription struct")
 }
 
+func TestModelGenerationOmitEnumJSONMarshalers(t *testing.T) {
+	cfg, err := config.LoadConfig("testdata/gqlgen_omit_json_marshalers.yml")
+	require.NoError(t, err)
+	require.NoError(t, cfg.Init())
+	p := Plugin{
+		MutateHook: mutateHook,
+		FieldHook:  DefaultFieldMutateHook,
+	}
+	require.NoError(t, p.MutateConfig(cfg))
+	require.NoError(t, goBuild(t, "./out_omit_json_enum_marshalers/"))
+	generated, err := os.ReadFile("./out_omit_json_enum_marshalers/generated.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(generated), "MarshalJSON")
+	require.NotContains(t, string(generated), "UnmarshalJSON")
+}
+
 func TestModelGenerationOmitResolverFields(t *testing.T) {
 	cfg, err := config.LoadConfig("testdata/gqlgen_omit_resolver_fields.yml")
 	require.NoError(t, err)
@@ -335,6 +376,8 @@ func TestModelGenerationOmitResolverFields(t *testing.T) {
 	require.Contains(t, string(generated), "type Base struct")
 	require.Contains(t, string(generated), "StandardField")
 	require.NotContains(t, string(generated), "ResolverField")
+	// ForceGeneratedField should be present because forceGenerate: true overrides OmitResolverFields
+	require.Contains(t, string(generated), "ForceGeneratedField")
 }
 
 func TestModelGenerationStructFieldPointers(t *testing.T) {
@@ -395,11 +438,31 @@ func TestModelGenerationNullableInputOmittable(t *testing.T) {
 	require.NoError(t, p.MutateConfig(cfg))
 
 	t.Run("nullable input fields are omittable", func(t *testing.T) {
-		require.IsType(t, graphql.Omittable[*string]{}, out_nullable_input_omittable.MissingInput{}.Name)
-		require.IsType(t, graphql.Omittable[*out_nullable_input_omittable.MissingEnum]{}, out_nullable_input_omittable.MissingInput{}.Enum)
-		require.IsType(t, graphql.Omittable[*string]{}, out_nullable_input_omittable.MissingInput{}.NullString)
-		require.IsType(t, graphql.Omittable[*out_nullable_input_omittable.MissingEnum]{}, out_nullable_input_omittable.MissingInput{}.NullEnum)
-		require.IsType(t, graphql.Omittable[*out_nullable_input_omittable.ExistingInput]{}, out_nullable_input_omittable.MissingInput{}.NullObject)
+		require.IsType(
+			t,
+			graphql.Omittable[*string]{},
+			out_nullable_input_omittable.MissingInput{}.Name,
+		)
+		require.IsType(
+			t,
+			graphql.Omittable[*out_nullable_input_omittable.MissingEnum]{},
+			out_nullable_input_omittable.MissingInput{}.Enum,
+		)
+		require.IsType(
+			t,
+			graphql.Omittable[*string]{},
+			out_nullable_input_omittable.MissingInput{}.NullString,
+		)
+		require.IsType(
+			t,
+			graphql.Omittable[*out_nullable_input_omittable.MissingEnum]{},
+			out_nullable_input_omittable.MissingInput{}.NullEnum,
+		)
+		require.IsType(
+			t,
+			graphql.Omittable[*out_nullable_input_omittable.ExistingInput]{},
+			out_nullable_input_omittable.MissingInput{}.NullObject,
+		)
 	})
 
 	t.Run("non-nullable input fields are not omittable", func(t *testing.T) {
@@ -556,14 +619,27 @@ func mutateHook(b *ModelBuild) *ModelBuild {
 	return b
 }
 
-func parseAst(path string) (*ast.Package, error) {
-	// test setup to parse the types
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, path, nil, parser.AllErrors)
-	if err != nil {
-		return nil, err
+// parseGeneratedFile loads the built fixture package in dir (relative to this
+// package) and returns the AST of its generated.go. It uses go/packages because
+// go/parser.ParseDir is deprecated (it ignores build tags).
+func parseGeneratedFile(t *testing.T, dir string) *ast.File {
+	t.Helper()
+
+	cfg := &packages.Config{Mode: packages.NeedFiles | packages.NeedSyntax}
+	pkgs, err := packages.Load(cfg, "github.com/99designs/gqlgen/plugin/modelgen/"+dir)
+	require.NoError(t, err)
+	require.Len(t, pkgs, 1)
+
+	pkg := pkgs[0]
+	require.Empty(t, pkg.Errors)
+
+	for _, f := range pkg.Syntax {
+		if filepath.Base(pkg.Fset.Position(f.Pos()).Filename) == "generated.go" {
+			return f
+		}
 	}
-	return pkgs["out"], nil
+	t.Fatalf("generated.go not found in package %q", dir)
+	return nil
 }
 
 func goBuild(t *testing.T, path string) error {
@@ -674,7 +750,11 @@ func TestRemoveDuplicate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.wantPanic {
-				assert.Panics(t, func() { removeDuplicateTags(tt.args.t) }, "The code did not panic")
+				assert.Panics(
+					t,
+					func() { removeDuplicateTags(tt.args.t) },
+					"The code did not panic",
+				)
 			} else {
 				if got := removeDuplicateTags(tt.args.t); got != tt.want {
 					t.Errorf("removeDuplicate() = %v, want %v", got, tt.want)
@@ -717,7 +797,13 @@ func Test_containsInvalidSpace(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equalf(t, tt.want, containsInvalidSpace(tt.args.valuesString), "containsInvalidSpace(%v)", tt.args.valuesString)
+			assert.Equalf(
+				t,
+				tt.want,
+				containsInvalidSpace(tt.args.valuesString),
+				"containsInvalidSpace(%v)",
+				tt.args.valuesString,
+			)
 		})
 	}
 }
@@ -769,7 +855,13 @@ func Test_splitTagsBySpace(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equalf(t, tt.want, splitTagsBySpace(tt.args.tagsString), "splitTagsBySpace(%v)", tt.args.tagsString)
+			assert.Equalf(
+				t,
+				tt.want,
+				splitTagsBySpace(tt.args.tagsString),
+				"splitTagsBySpace(%v)",
+				tt.args.tagsString,
+			)
 		})
 	}
 }
@@ -783,4 +875,19 @@ func TestCustomTemplate(t *testing.T) {
 		FieldHook:  DefaultFieldMutateHook,
 	}
 	require.NoError(t, p.MutateConfig(cfg))
+}
+
+func getStringInBetween(str, start, end string) string {
+	_, after, ok := strings.Cut(str, start)
+	if !ok {
+		return ""
+	}
+
+	newStr := after
+	before, _, ok := strings.Cut(newStr, end)
+	if !ok {
+		return ""
+	}
+
+	return before
 }

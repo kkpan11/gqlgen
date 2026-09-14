@@ -33,7 +33,7 @@ func (h GRAPHQL) Supports(r *http.Request) bool {
 		return false
 	}
 
-	return r.Method == "POST" && mediaType == "application/graphql"
+	return r.Method == http.MethodPost && mediaType == "application/graphql"
 }
 
 func (h GRAPHQL) Do(w http.ResponseWriter, r *http.Request, exec graphql.GraphExecutor) {
@@ -41,11 +41,6 @@ func (h GRAPHQL) Do(w http.ResponseWriter, r *http.Request, exec graphql.GraphEx
 	writeHeaders(w, h.ResponseHeaders)
 	params := &graphql.RawParams{}
 	start := graphql.Now()
-	params.Headers = r.Header
-	params.ReadTime = graphql.TraceTiming{
-		Start: start,
-		End:   graphql.Now(),
-	}
 
 	bodyString, err := getRequestBody(r)
 	if err != nil {
@@ -62,6 +57,12 @@ func (h GRAPHQL) Do(w http.ResponseWriter, r *http.Request, exec graphql.GraphEx
 		resp := exec.DispatchError(ctx, gqlerror.List{gqlErr})
 		writeJson(w, resp)
 		return
+	}
+
+	params.Headers = r.Header
+	params.ReadTime = graphql.TraceTiming{
+		Start: start,
+		End:   graphql.Now(),
 	}
 
 	rc, opErr := exec.CreateOperationContext(ctx, params)

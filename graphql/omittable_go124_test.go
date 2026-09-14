@@ -1,5 +1,3 @@
-//go:build go1.24
-
 package graphql
 
 import (
@@ -134,8 +132,10 @@ func TestOmittableIsZeroFalse_MarshalJSONGo124(t *testing.T) {
 			expectedJSON: `{"Value":0}`,
 		},
 		{
-			name:         "omittable omittable", //nolint:dupword
-			input:        struct{ Value Omittable[Omittable[uint64]] }{Value: OmittableOf(OmittableOf(uint64(42)))},
+			name: "omittable omittable", //nolint:dupword
+			input: struct{ Value Omittable[Omittable[uint64]] }{
+				Value: OmittableOf(OmittableOf(uint64(42))),
+			},
 			expectedJSON: `{"Value":42}`,
 		},
 		{

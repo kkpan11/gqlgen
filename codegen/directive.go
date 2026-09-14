@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -28,17 +29,18 @@ type Directive struct {
 // IsLocation check location directive
 func (d *Directive) IsLocation(location ...ast.DirectiveLocation) bool {
 	for _, l := range d.Locations {
-		for _, a := range location {
-			if l == a {
-				return true
-			}
+		if slices.Contains(location, l) {
+			return true
 		}
 	}
 
 	return false
 }
 
-func locationDirectives(directives DirectiveList, location ...ast.DirectiveLocation) map[string]*Directive {
+func locationDirectives(
+	directives DirectiveList,
+	location ...ast.DirectiveLocation,
+) map[string]*Directive {
 	mDirectives := make(map[string]*Directive)
 	for name, d := range directives {
 		if d.IsLocation(location...) {
@@ -73,7 +75,12 @@ func (b *builder) buildDirectives() (map[string]*Directive, error) {
 				var err error
 				newArg.Default, err = arg.DefaultValue.Value(nil)
 				if err != nil {
-					return nil, fmt.Errorf("default value for directive argument %s(%s) is not valid: %w", dir.Name, arg.Name, err)
+					return nil, fmt.Errorf(
+						"default value for directive argument %s(%s) is not valid: %w",
+						dir.Name,
+						arg.Name,
+						err,
+					)
 				}
 			}
 			args = append(args, newArg)
@@ -142,7 +149,14 @@ func (d *Directive) CallArgs() string {
 	args := []string{"ctx", "obj", "n"}
 
 	for _, arg := range d.Args {
-		args = append(args, fmt.Sprintf("args[%q].(%s)", arg.Name, templates.CurrentImports.LookupType(arg.TypeReference.GO)))
+		args = append(
+			args,
+			fmt.Sprintf(
+				"args[%q].(%s)",
+				arg.Name,
+				templates.CurrentImports.LookupType(arg.TypeReference.GO),
+			),
+		)
 	}
 
 	return strings.Join(args, ", ")
@@ -170,9 +184,16 @@ func (d *Directive) CallName() string {
 func (d *Directive) Declaration() string {
 	res := d.CallName() + " func(ctx context.Context, obj any, next graphql.Resolver"
 
+	var resSb173 strings.Builder
 	for _, arg := range d.Args {
-		res += fmt.Sprintf(", %s %s", templates.ToGoPrivate(arg.Name), templates.CurrentImports.LookupType(arg.TypeReference.GO))
+		fmt.Fprintf(
+			&resSb173,
+			", %s %s",
+			templates.ToGoPrivate(arg.Name),
+			templates.CurrentImports.LookupType(arg.TypeReference.GO),
+		)
 	}
+	res += resSb173.String()
 
 	res += ") (res any, err error)"
 	return res
@@ -187,7 +208,7 @@ func (d *Directive) CallPath() string {
 		return "builtInDirective" + d.CallName()
 	}
 
-	return "ec.directives." + d.CallName()
+	return "ec.Directives." + d.CallName()
 }
 
 func (d *Directive) FunctionImpl() string {

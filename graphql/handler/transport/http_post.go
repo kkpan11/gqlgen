@@ -19,6 +19,11 @@ type POST struct {
 	// Map of all headers that are added to graphql response. If not
 	// set, only one header: Content-Type: application/graphql-response+json will be set.
 	ResponseHeaders map[string][]string
+
+	// UseGrapQLResponseJsonByDefault determines whether to use 'application/graphql-response+json'
+	// as the response content type
+	// when the Accept header is empty or 'application/*' or '*/*'.
+	UseGrapQLResponseJsonByDefault bool
 }
 
 var _ graphql.Transport = POST{}
@@ -33,7 +38,7 @@ func (h POST) Supports(r *http.Request) bool {
 		return false
 	}
 
-	return r.Method == "POST" && mediaType == "application/json"
+	return r.Method == http.MethodPost && mediaType == "application/json"
 }
 
 func getRequestBody(r *http.Request) (string, error) {
@@ -55,7 +60,11 @@ var pool = sync.Pool{
 
 func (h POST) Do(w http.ResponseWriter, r *http.Request, exec graphql.GraphExecutor) {
 	ctx := r.Context()
-	contentType := determineResponseContentType(h.ResponseHeaders, r)
+	contentType := determineResponseContentType(
+		h.ResponseHeaders,
+		r,
+		h.UseGrapQLResponseJsonByDefault,
+	)
 	responseHeaders := mergeHeaders(
 		map[string][]string{
 			"Content-Type": {contentType},
@@ -74,13 +83,7 @@ func (h POST) Do(w http.ResponseWriter, r *http.Request, exec graphql.GraphExecu
 
 		pool.Put(params)
 	}()
-	params.Headers = r.Header
-
 	start := graphql.Now()
-	params.ReadTime = graphql.TraceTiming{
-		Start: start,
-		End:   graphql.Now(),
-	}
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -91,7 +94,7 @@ func (h POST) Do(w http.ResponseWriter, r *http.Request, exec graphql.GraphExecu
 	}
 
 	bodyReader := bytes.NewReader(bodyBytes)
-	if err := jsonDecode(bodyReader, &params); err != nil {
+	if err := jsonDecode(bodyReader, params); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		gqlErr := gqlerror.Errorf(
 			"json request body could not be decoded: %+v body:%s",
@@ -101,6 +104,12 @@ func (h POST) Do(w http.ResponseWriter, r *http.Request, exec graphql.GraphExecu
 		resp := exec.DispatchError(ctx, gqlerror.List{gqlErr})
 		writeJson(w, resp)
 		return
+	}
+
+	params.Headers = r.Header
+	params.ReadTime = graphql.TraceTiming{
+		Start: start,
+		End:   graphql.Now(),
 	}
 
 	rc, opErr := exec.CreateOperationContext(ctx, params)

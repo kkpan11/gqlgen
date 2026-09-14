@@ -41,14 +41,18 @@ func TestExecutor(t *testing.T) {
 
 	t.Run("invokes operation middleware in order", func(t *testing.T) {
 		var calls []string
-		exec.AroundOperations(func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
-			calls = append(calls, "first")
-			return next(ctx)
-		})
-		exec.AroundOperations(func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
-			calls = append(calls, "second")
-			return next(ctx)
-		})
+		exec.AroundOperations(
+			func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+				calls = append(calls, "first")
+				return next(ctx)
+			},
+		)
+		exec.AroundOperations(
+			func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+				calls = append(calls, "second")
+				return next(ctx)
+			},
+		)
 
 		resp := query(exec, "", "{name}")
 		assert.JSONEq(t, `{"name":"test"}`, string(resp.Data))
@@ -57,14 +61,18 @@ func TestExecutor(t *testing.T) {
 
 	t.Run("invokes response middleware in order", func(t *testing.T) {
 		var calls []string
-		exec.AroundResponses(func(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
-			calls = append(calls, "first")
-			return next(ctx)
-		})
-		exec.AroundResponses(func(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
-			calls = append(calls, "second")
-			return next(ctx)
-		})
+		exec.AroundResponses(
+			func(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
+				calls = append(calls, "first")
+				return next(ctx)
+			},
+		)
+		exec.AroundResponses(
+			func(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
+				calls = append(calls, "second")
+				return next(ctx)
+			},
+		)
 
 		resp := query(exec, "", "{name}")
 		assert.JSONEq(t, `{"name":"test"}`, string(resp.Data))
@@ -73,14 +81,18 @@ func TestExecutor(t *testing.T) {
 
 	t.Run("invokes root field middleware in order", func(t *testing.T) {
 		var calls []string
-		exec.AroundRootFields(func(ctx context.Context, next graphql.RootResolver) graphql.Marshaler {
-			calls = append(calls, "first")
-			return next(ctx)
-		})
-		exec.AroundRootFields(func(ctx context.Context, next graphql.RootResolver) graphql.Marshaler {
-			calls = append(calls, "second")
-			return next(ctx)
-		})
+		exec.AroundRootFields(
+			func(ctx context.Context, next graphql.RootResolver) graphql.Marshaler {
+				calls = append(calls, "first")
+				return next(ctx)
+			},
+		)
+		exec.AroundRootFields(
+			func(ctx context.Context, next graphql.RootResolver) graphql.Marshaler {
+				calls = append(calls, "second")
+				return next(ctx)
+			},
+		)
 
 		resp := query(exec, "", "{name}")
 		assert.JSONEq(t, `{"name":"test"}`, string(resp.Data))
@@ -125,12 +137,14 @@ func TestExecutor(t *testing.T) {
 	t.Run("get query parse error in AroundResponses", func(t *testing.T) {
 		var errors1 gqlerror.List
 		var errors2 gqlerror.List
-		exec.AroundResponses(func(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
-			resp := next(ctx)
-			errors1 = graphql.GetErrors(ctx)
-			errors2 = resp.Errors
-			return resp
-		})
+		exec.AroundResponses(
+			func(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
+				resp := next(ctx)
+				errors1 = graphql.GetErrors(ctx)
+				errors2 = resp.Errors
+				return resp
+			},
+		)
 
 		resp := query(exec, "", "invalid")
 		assert.Empty(t, string(resp.Data))
@@ -169,26 +183,73 @@ func TestExecutor(t *testing.T) {
 	})
 }
 
-func TestExecutorDisableSuggestion(t *testing.T) {
+func TestDispatchOperationContextCancel(t *testing.T) {
 	exec := testexecutor.New()
+
+	ctx, cancel := context.WithCancel(graphql.StartOperationTrace(context.Background()))
+	now := graphql.Now()
+	rc, listErr := exec.CreateOperationContext(ctx, &graphql.RawParams{
+		Query: "{name}",
+		ReadTime: graphql.TraceTiming{
+			Start: now,
+			End:   now,
+		},
+	})
+	require.Nil(t, listErr)
+
+	responses, opCtx := exec.DispatchOperation(ctx, rc)
+	require.NotNil(t, responses(opCtx))
+
+	responses, opCtx = exec.DispatchOperation(ctx, rc)
+	require.NotNil(t, responses(opCtx))
+
+	cancel()
+	responses, opCtx = exec.DispatchOperation(ctx, rc)
+	assert.Nil(t, responses(opCtx))
+}
+
+func TestExecutorDisableSuggestion(t *testing.T) {
 	t.Run("by default, the error message will include suggestions", func(t *testing.T) {
+		exec := testexecutor.New()
 		resp := query(exec, "", "{nam}")
 		assert.Empty(t, string(resp.Data))
-		assert.Equal(t, "input:1: Cannot query field \"nam\" on type \"Query\". Did you mean \"name\"?\n", resp.Errors.Error())
+		assert.Equal(
+			t,
+			"input:1:2: Cannot query field \"nam\" on type \"Query\". Did you mean \"name\"?\n",
+			resp.Errors.Error(),
+		)
 	})
 
 	t.Run("disable suggestion, the error message will not include suggestions", func(t *testing.T) {
+		exec := testexecutor.New()
 		exec.SetDisableSuggestion(true)
 		resp := query(exec, "", "{nam}")
 		assert.Empty(t, string(resp.Data))
 		assert.Len(t, resp.Errors, 1)
-		assert.Equal(t, "input:1: Cannot query field \"nam\" on type \"Query\".\n", resp.Errors.Error())
+		assert.Equal(
+			t,
+			"input:1:2: Cannot query field \"nam\" on type \"Query\".\n",
+			resp.Errors.Error(),
+		)
 
 		// check if the error message is displayed correctly even if an error occurs multiple times
 		resp = query(exec, "", "{nam}")
 		assert.Empty(t, string(resp.Data))
 		assert.Len(t, resp.Errors, 1)
-		assert.Equal(t, "input:1: Cannot query field \"nam\" on type \"Query\".\n", resp.Errors.Error())
+		assert.Equal(
+			t,
+			"input:1:2: Cannot query field \"nam\" on type \"Query\".\n",
+			resp.Errors.Error(),
+		)
+
+		resp = query(exec, "", "{ user }")
+		assert.Empty(t, string(resp.Data))
+		assert.Len(t, resp.Errors, 1)
+		assert.Equal(
+			t,
+			"input:1:3: Field \"user\" of type \"User!\" must have a selection of subfields.\n",
+			resp.Errors.Error(),
+		)
 	})
 }
 
@@ -204,7 +265,10 @@ func (m *testParamMutator) Validate(s graphql.ExecutableSchema) error {
 	return nil
 }
 
-func (m *testParamMutator) MutateOperationParameters(ctx context.Context, r *graphql.RawParams) *gqlerror.Error {
+func (m *testParamMutator) MutateOperationParameters(
+	ctx context.Context,
+	r *graphql.RawParams,
+) *gqlerror.Error {
 	return m.Mutate(ctx, r)
 }
 
@@ -220,7 +284,10 @@ func (m *testCtxMutator) Validate(s graphql.ExecutableSchema) error {
 	return nil
 }
 
-func (m *testCtxMutator) MutateOperationContext(ctx context.Context, opCtx *graphql.OperationContext) *gqlerror.Error {
+func (m *testCtxMutator) MutateOperationContext(
+	ctx context.Context,
+	opCtx *graphql.OperationContext,
+) *gqlerror.Error {
 	return m.Mutate(ctx, opCtx)
 }
 
@@ -230,12 +297,14 @@ func TestErrorServer(t *testing.T) {
 	t.Run("get resolver error in AroundResponses", func(t *testing.T) {
 		var errors1 gqlerror.List
 		var errors2 gqlerror.List
-		exec.AroundResponses(func(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
-			resp := next(ctx)
-			errors1 = graphql.GetErrors(ctx)
-			errors2 = resp.Errors
-			return resp
-		})
+		exec.AroundResponses(
+			func(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
+				resp := next(ctx)
+				errors1 = graphql.GetErrors(ctx)
+				errors2 = resp.Errors
+				return resp
+			},
+		)
 
 		resp := query(exec, "", "{name}")
 		assert.Equal(t, "null", string(resp.Data))

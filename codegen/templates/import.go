@@ -22,8 +22,10 @@ type Imports struct {
 	packages *code.Packages
 }
 
+var AnyType = types.Universe.Lookup("any").Type()
+
 func (i *Import) String() string {
-	if strings.HasSuffix(i.Path, i.Alias) {
+	if strings.HasSuffix(i.Path, i.Alias) && i.Alias == i.Name {
 		return strconv.Quote(i.Path)
 	}
 
@@ -32,12 +34,14 @@ func (i *Import) String() string {
 
 func (s *Imports) String() string {
 	res := ""
+	var resSb35 strings.Builder
 	for i, imp := range s.imports {
 		if i != 0 {
-			res += "\n"
+			resSb35.WriteString("\n")
 		}
-		res += imp.String()
+		resSb35.WriteString(imp.String())
 	}
+	res += resSb35.String()
 	return res
 }
 
@@ -116,6 +120,9 @@ func (s *Imports) Lookup(path string) string {
 }
 
 func (s *Imports) LookupType(t types.Type) string {
+	if iface, ok := types.Unalias(t).(*types.Interface); ok && iface.Empty() {
+		t = AnyType
+	}
 	return types.TypeString(t, func(i *types.Package) string {
 		return s.Lookup(i.Path())
 	})

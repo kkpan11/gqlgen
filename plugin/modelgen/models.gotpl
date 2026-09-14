@@ -37,7 +37,7 @@
 			{{- with .Description }}
 				{{.|prefixLines "// "}}
 			{{- end}}
-			{{ $field.GoName }} {{$field.Type | ref}} `{{$field.Tag}}`
+			{{ if $field.GoName }}{{ $field.GoName }} {{ end }}{{$field.Type | ref}}{{ if $field.Tag }} `{{$field.Tag}}`{{ end }}
 		{{- end }}
 	}
 
@@ -98,21 +98,23 @@
 	}
 
 	func (e {{ goModelName .Name }}) MarshalGQL(w io.Writer) {
-		fmt.Fprint(w, strconv.Quote(e.String()))
+		_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
 	}
+	{{- if not .OmitJSONMarshalers }}
 
-	func (e *{{ goModelName .Name }})UnmarshalJSON(b []byte) error {
-		s, err := strconv.Unquote(string(b))
-		if err != nil {
-			return err
+		func (e *{{ goModelName .Name }})UnmarshalJSON(b []byte) error {
+			s, err := strconv.Unquote(string(b))
+			if err != nil {
+				return err
+			}
+			return e.UnmarshalGQL(s)
 		}
-		return e.UnmarshalGQL(s)
-	}
 
-	func (e {{ goModelName .Name }}) MarshalJSON() ([]byte, error) {
-		var buf bytes.Buffer
-		e.MarshalGQL(&buf)
-		return buf.Bytes(), nil
-	}
+		func (e {{ goModelName .Name }}) MarshalJSON() ([]byte, error) {
+			var buf bytes.Buffer
+			e.MarshalGQL(&buf)
+			return buf.Bytes(), nil
+		}
+	{{- end }}
 
 {{- end }}
